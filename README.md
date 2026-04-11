@@ -7,6 +7,13 @@
 
 ## 🛠️ 한글 사용 가이드
 
+### 0️⃣ 초기 환경 설정 (처음에 딱 한 번만!)
+프로그램을 실행하려면 파이썬 패키지들이 필요해요. 까만 터미널 창(cmd)을 열고, 아래 명령어를 복사해서 붙여넣은 뒤 엔터를 쳐주세요! (최초 1회만 하시면 됩니다)
+```bash
+pip install python-pptx requests beautifulsoup4
+```
+<br>
+
 ### 1️⃣ 템플릿 파일 준비 (`template.pptx`)
 스크립트가 있는 폴더 안에 평소에 사용하는 **예배 PPT 템플릿 파일**을 넣어 주세요.
 
@@ -58,6 +65,13 @@ python lyrics_to_ppt.py
 ---
 
 ## 🇺🇸 English Guide
+
+### 0️⃣ Initial Environment Setup (Run only once!)
+To run this tool, you need to install a few required Python packages. Open your terminal (cmd) and copy-paste the command below, then hit Enter!
+```bash
+pip install python-pptx requests beautifulsoup4
+```
+<br>
 
 ### 1️⃣ Prepare the Template (`template.pptx`)
 Ensure your usual **Worship PPT Template file** is placed inside the script folder.
