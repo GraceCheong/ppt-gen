@@ -1,5 +1,8 @@
 import re
 import os
+import sys
+import tkinter as tk
+from tkinter import ttk, scrolledtext, messagebox
 from pptx import Presentation
 
 # ==========================================
@@ -22,7 +25,6 @@ def parse_lyrics_text(raw_text):
     return lyrics_dict
 
 def get_base_key(part_key):
-    # Removes trailing primes (') to find the base key.
     return re.sub(r"'+$", "", part_key)
 
 def chunk_text(text, max_lines=2):
@@ -36,8 +38,6 @@ def chunk_text(text, max_lines=2):
     i = 0
     while i < len(lines):
         take_lines = max_lines
-        
-        # If the line is strictly shorter than the minimum threshold (<= 6 to comfortably catch small words), bundle it with the next
         if max_lines == 1 and len(lines[i]) <= MIN_LINE_THRESHOLD and i + 1 < len(lines):
             take_lines = 2
             
@@ -51,15 +51,13 @@ def chunk_text(text, max_lines=2):
 # 2. Core PPT Generator Function
 # ==========================================
 
-def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mode=False):
+def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mode=False, long_line_threshold=18):
     lyrics_dict = parse_lyrics_text(lyrics_text)
     sequence_list = [part.strip() for part in sequence_str.split('-') if part.strip()]
     
-    # Check entire song text to assign a fixed lines-per-slide value
     max_lines_per_slide = 4 if compact_mode else 2
     min_lines = 3 if compact_mode else 1
     
-    LONG_LINE_THRESHOLD = 18
     is_long = False
     
     for part in sequence_list:
@@ -77,7 +75,7 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mod
         if test_text:
             lines = [L.strip() for L in test_text.split('\n') if L.strip()]
             for L in lines:
-                if len(L) >= LONG_LINE_THRESHOLD:
+                if len(L) >= long_line_threshold:
                     is_long = True
                     break
         if is_long:
@@ -86,7 +84,6 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mod
     if is_long:
         max_lines_per_slide = min_lines
             
-    # Find master slide layouts ('Title' & 'Lyrics')
     title_layout = None
     lyrics_layout = None
     
@@ -96,24 +93,20 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mod
         if "가사" in layout.name:
             lyrics_layout = layout
             
-    # Fallback indexes
     if title_layout is None:
         title_layout = prs.slide_layouts[2] if len(prs.slide_layouts) > 2 else prs.slide_layouts[0]
     if lyrics_layout is None:
         lyrics_layout = prs.slide_layouts[3] if len(prs.slide_layouts) > 3 else prs.slide_layouts[0]
 
-    # ---- 1. Add Song Title Slide ----
     title_slide = prs.slides.add_slide(title_layout)
     for shape in title_slide.placeholders:
         if shape.has_text_frame:
             shape.text_frame.text = song_title
             break
 
-    # ---- 2. Add Lyrics Slides per Part ----
     for idx, part in enumerate(sequence_list):
         base_part = get_base_key(part)
         
-        # Resolve text
         if part in lyrics_dict:
             display_text = lyrics_dict[part]
         elif base_part in lyrics_dict:
@@ -122,19 +115,14 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mod
             if part.startswith('(') and part.endswith(')'):
                 display_text = part[1:-1].strip()
             else:
-                # Skip empty slide for leading 'I' or 'Intro' as Title slide takes its place.
                 if idx == 0 and base_part.upper() in ["I", "INTRO"]:
                     continue
-                
-                # Unregistered parts (like Interlude) are treated as empty lyrics to add a blank slide.
                 display_text = "-"
             
-        # Chunk text
         chunks = chunk_text(display_text, max_lines_per_slide)
         if not chunks:
             chunks = [""]
             
-        # Create slides
         for chunk in chunks:
             slide = prs.slides.add_slide(lyrics_layout)
             
@@ -144,123 +132,198 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mod
             for shape in slide.placeholders:
                 if shape.has_text_frame:
                     name_lower = shape.name.lower()
-                    # Tag as title position if name contains 'title' or '제목'
                     if 'title' in name_lower or '제목' in shape.name:
                         title_placeholder = shape
                     else:
                         if body_placeholder is None:
                             body_placeholder = shape
                             
-            # Based on user request: Template text boxes map in reverse, swapping inputs.
-            # Place lyrics (chunk) in the Title placeholder area
             if title_placeholder is not None:
                 title_placeholder.text_frame.text = chunk
                 
-            # Place song title in the Body placeholder area
             if body_placeholder is not None:
                 body_placeholder.text_frame.text = song_title
 
 # ==========================================
-# 3. Batch Processor & Interactive Fallbacks
+# 3. GUI Implementation
 # ==========================================
 
-def get_manual_lyrics(song_title):
-    print(f"Please paste the lyrics for '{song_title}' below.")
-    print("(Type 'EOF' on a new line and press Enter when done):")
-    print("-" * 40)
-    lyrics_lines = []
-    while True:
-        try:
-            line = input()
-            if line.strip().upper() == 'EOF':
-                break
-            lyrics_lines.append(line)
-        except EOFError:
-            break
-    print("-" * 40)
-    return '\n'.join(lyrics_lines)
+class MultilineDialog(tk.Toplevel):
+    def __init__(self, parent, title, prompt):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("400x350")
+        self.transient(parent)
+        self.result = None
+        
+        ttk.Label(self, text=prompt).pack(pady=10)
+        self.text_area = scrolledtext.ScrolledText(self, width=45, height=12)
+        self.text_area.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="OK", command=self.on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.on_cancel).pack(side=tk.LEFT, padx=5)
+        
+        # Enable closing via X button
+        self.protocol("WM_DELETE_WINDOW", self.on_cancel)
+        
+        # Wait for the dialog to be closed
+        self.grab_set()
+        self.wait_window(self)
 
-if __name__ == "__main__":
-    print("====================================")
-    print("   Lyrics PowerPoint Generator")
-    print("====================================")
-    
-    print("\n[Settings]")
-    print("1) Standard Mode (1~2 lines per slide)")
-    print("2) Compact Mode (3~4 lines per slide)")
-    mode_input = input("Select layout mode (1 or 2) [Default: 1]: ").strip()
-    compact_mode = (mode_input == "2")
-    print("\n")
-    
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    TEMPLATE_FILE = os.path.join(script_dir, "template.pptx")
-    SEQUENCE_FILE = os.path.join(script_dir, "sequences.txt")
-    
-    # Initialize a single presentation to embed all lyrics
-    if not os.path.exists(TEMPLATE_FILE):
-        print(f"[Error] Cannot find template PPTX file '{TEMPLATE_FILE}'.")
-        exit(1)
+    def on_ok(self):
+        self.result = self.text_area.get("1.0", tk.END).strip()
+        self.destroy()
+
+    def on_cancel(self):
+        self.destroy()
+
+class LyricsApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Lyrics PowerPoint Generator")
+        self.geometry("600x450")
         
-    prs = Presentation(TEMPLATE_FILE)
-    
-    # If sequences.txt exists, do automatic batch generation into ONE file
-    if os.path.exists(SEQUENCE_FILE):
-        print(f"[Info] Found '{SEQUENCE_FILE}'. Integrating all songs into one PPT...\n")
+        self.create_widgets()
         
-        with open(SEQUENCE_FILE, 'r', encoding='utf-8') as f:
-            lines = [line.strip() for line in f.readlines() if line.strip()]
+        if getattr(sys, 'frozen', False):
+            self.base_dir = os.path.dirname(sys.executable)
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    def create_widgets(self):
+        # Settings Frame
+        settings_frame = ttk.LabelFrame(self, text="Settings", padding=(10, 10))
+        settings_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Mode Selection
+        ttk.Label(settings_frame, text="Layout Mode:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.mode_var = tk.StringVar(value="Standard")
+        ttk.Radiobutton(settings_frame, text="Standard Mode (1~2 lines)", variable=self.mode_var, value="Standard").grid(row=0, column=1, sticky=tk.W)
+        ttk.Radiobutton(settings_frame, text="Compact Mode (3~4 lines)", variable=self.mode_var, value="Compact").grid(row=0, column=2, sticky=tk.W)
+        
+        # Threshold Settings
+        ttk.Label(settings_frame, text="긴 줄 기준 글자 수\n(Long Line Threshold):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.threshold_var = tk.IntVar(value=18)
+        ttk.Spinbox(settings_frame, from_=5, to=100, textvariable=self.threshold_var, width=5).grid(row=1, column=1, sticky=tk.W)
+        
+        # Generate Button
+        self.generate_btn = ttk.Button(self, text="Generate PPT", command=self.generate_ppt)
+        self.generate_btn.pack(pady=10)
+        
+        # Log Area
+        self.log_area = scrolledtext.ScrolledText(self, width=70, height=12, state=tk.DISABLED)
+        self.log_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        
+    def log(self, message):
+        self.log_area.config(state=tk.NORMAL)
+        self.log_area.insert(tk.END, message + "\n")
+        self.log_area.see(tk.END)
+        self.log_area.config(state=tk.DISABLED)
+        self.update_idletasks()
+
+    def get_manual_lyrics(self, song_title):
+        dialog = MultilineDialog(self, "Input Lyrics", f"Please paste the lyrics for '{song_title}' below:")
+        return dialog.result or ""
+
+    def generate_ppt(self):
+        self.log("====================================")
+        self.log("Starting PPT Generation...")
+        
+        compact_mode = (self.mode_var.get() == "Compact")
+        long_line_threshold = self.threshold_var.get()
+        
+        template_file = os.path.join(self.base_dir, "template.pptx")
+        sequence_file = os.path.join(self.base_dir, "sequences.txt")
+        
+        if not os.path.exists(template_file):
+            self.log(f"[Error] Cannot find template PPTX file: '{template_file}'")
+            messagebox.showerror("Error", f"Template file missing:\n{template_file}")
+            return
             
-        for i in range(0, len(lines), 2):
-            song_title = lines[i]
+        try:
+            prs = Presentation(template_file)
+        except Exception as e:
+            self.log(f"[Error] Failed to load template: {e}")
+            return
+
+        if os.path.exists(sequence_file):
+            self.log(f"[Info] Found 'sequences.txt'. Integrating all songs...\n")
             
-            if i + 1 < len(lines):
-                sequence_str = lines[i+1]
-            else:
-                print(f"[Warning] Missing sequence string for '{song_title}'. Skipping...")
-                continue
+            with open(sequence_file, 'r', encoding='utf-8') as f:
+                lines = [line.strip() for line in f.readlines() if line.strip()]
                 
-            lyrics_file = os.path.join(script_dir, f"{song_title}.txt")
+            for i in range(0, len(lines), 2):
+                song_title = lines[i]
+                
+                if i + 1 < len(lines):
+                    sequence_str = lines[i+1]
+                else:
+                    self.log(f"[Warning] Missing sequence string for '{song_title}'. Skipping...")
+                    continue
+                    
+                lyrics_file = os.path.join(self.base_dir, f"{song_title}.txt")
+                
+                raw_lyrics = ""
+                if os.path.exists(lyrics_file):
+                    self.log(f"-> Processing '{song_title}'")
+                    with open(lyrics_file, 'r', encoding='utf-8') as f:
+                        raw_lyrics = f.read()
+                else:
+                    self.log(f"[Warning] '{lyrics_file}' Not Found! Prompting manual input...")
+                    raw_lyrics = self.get_manual_lyrics(song_title)
+                    
+                if raw_lyrics:
+                    append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, compact_mode, long_line_threshold)
+                else:
+                    self.log(f"   Skipped '{song_title}' (No lyrics provided)")
+                
+            output_file = os.path.join(self.base_dir, "integrated_lyrics.pptx")
+            try:
+                prs.save(output_file)
+                self.log(f"\n[Success] Created '{output_file}'.\n")
+                messagebox.showinfo("Success", f"PPT successfully generated!\nSaved as: integrated_lyrics.pptx")
+            except Exception as e:
+                self.log(f"[Error] Failed to save PPT: {e}")
+                
+        else:
+            self.log(f"[Warning] 'sequences.txt' not found. Falling back to single-song manual mode...\n")
             
+            from tkinter import simpledialog
+            song_title = simpledialog.askstring("Input", "Enter the Song Title:", parent=self)
+            if not song_title:
+                self.log("Cancelled single-song mode.")
+                return
+                
+            sequence_str = simpledialog.askstring("Input", "Enter the Sequence (e.g., I-V1-C-Out):", parent=self)
+            if not sequence_str:
+                self.log("Cancelled single-song mode.")
+                return
+                
+            lyrics_file = os.path.join(self.base_dir, f"{song_title}.txt")
             raw_lyrics = ""
+            
             if os.path.exists(lyrics_file):
-                print(f"-> Processing '{song_title}'")
+                self.log(f"[Success] Found '{lyrics_file}' automatically!")
                 with open(lyrics_file, 'r', encoding='utf-8') as f:
                     raw_lyrics = f.read()
             else:
-                print(f"[Warning] '{lyrics_file}' Not Found!")
-                raw_lyrics = get_manual_lyrics(song_title)
+                self.log(f"Prompting explicit manual lyrics input for: {song_title}")
+                raw_lyrics = self.get_manual_lyrics(song_title)
                 
-            append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, compact_mode=compact_mode)
-            
-        OUTPUT_FILE = os.path.join(script_dir, "integrated_lyrics.pptx")
-        prs.save(OUTPUT_FILE)
-        print(f"\n[Success] All songs integrated! Created '{OUTPUT_FILE}'.\n")
+            if raw_lyrics and sequence_str:
+                append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, compact_mode, long_line_threshold)
+                output_file = os.path.join(self.base_dir, f"{song_title}.pptx")
+                try:
+                    prs.save(output_file)
+                    self.log(f"\n[Success] Created '{output_file}'.\n")
+                    messagebox.showinfo("Success", f"PPT successfully generated!\nSaved as: {song_title}.pptx")
+                except Exception as e:
+                    self.log(f"[Error] Failed to save PPT: {e}")
+            else:
+                self.log("\n[Error] Lyrics or Sequence cannot be empty.")
 
-    # If sequences.txt doesn't exist, gracefully fallback
-    else:
-        print(f"[Warning] '{SEQUENCE_FILE}' not found in the current folder.")
-        print("Falling back to single-song manual mode...\n")
-        
-        song_title = input("Enter the Song Title: ").strip()
-        if not song_title:
-            song_title = "Untitled_Song"
-            
-        sequence_str = input("Enter the Sequence (e.g., I-V1-C-Out): ").strip()
-        
-        lyrics_file = os.path.join(script_dir, f"{song_title}.txt")
-        raw_lyrics = ""
-        
-        if os.path.exists(lyrics_file):
-            print(f"[Success] Found '{lyrics_file}' automatically!")
-            with open(lyrics_file, 'r', encoding='utf-8') as f:
-                raw_lyrics = f.read()
-        else:
-            raw_lyrics = get_manual_lyrics(song_title)
-            
-        if raw_lyrics.strip() and sequence_str.strip():
-            append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, compact_mode=compact_mode)
-            OUTPUT_FILE = os.path.join(script_dir, f"{song_title}.pptx")
-            prs.save(OUTPUT_FILE)
-            print(f"\n[Success] Created '{OUTPUT_FILE}'.\n")
-        else:
-            print("\n[Error] Lyrics or Sequence cannot be empty.")
+if __name__ == "__main__":
+    app = LyricsApp()
+    app.mainloop()

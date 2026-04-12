@@ -1,2 +1,7 @@
 *.pptx
 !template.pptx
+
+*.exe
+build/
+dist/
+*.spec
