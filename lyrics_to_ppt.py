@@ -126,23 +126,17 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mod
         for chunk in chunks:
             slide = prs.slides.add_slide(lyrics_layout)
             
-            title_placeholder = None
-            body_placeholder = None
+            placeholders = [shape for shape in slide.placeholders if shape.has_text_frame]
+            placeholders.sort(key=lambda s: getattr(s, 'width', 0) * getattr(s, 'height', 0), reverse=True)
             
-            for shape in slide.placeholders:
-                if shape.has_text_frame:
-                    name_lower = shape.name.lower()
-                    if 'title' in name_lower or '제목' in shape.name:
-                        title_placeholder = shape
-                    else:
-                        if body_placeholder is None:
-                            body_placeholder = shape
+            lyrics_placeholder = placeholders[0] if len(placeholders) > 0 else None
+            song_title_placeholder = placeholders[1] if len(placeholders) > 1 else None
                             
-            if title_placeholder is not None:
-                title_placeholder.text_frame.text = chunk
+            if lyrics_placeholder is not None:
+                lyrics_placeholder.text_frame.text = chunk
                 
-            if body_placeholder is not None:
-                body_placeholder.text_frame.text = song_title
+            if song_title_placeholder is not None:
+                song_title_placeholder.text_frame.text = song_title
 
 # ==========================================
 # 3. GUI Implementation
