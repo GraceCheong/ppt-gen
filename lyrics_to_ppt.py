@@ -51,12 +51,11 @@ def chunk_text(text, max_lines=2):
 # 2. Core PPT Generator Function
 # ==========================================
 
-def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mode=False, long_line_threshold=18):
+def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, max_lines_per_slide=2, long_line_threshold=18):
     lyrics_dict = parse_lyrics_text(lyrics_text)
     sequence_list = [part.strip() for part in sequence_str.split('-') if part.strip()]
     
-    max_lines_per_slide = 4 if compact_mode else 2
-    min_lines = 3 if compact_mode else 1
+    min_lines = max(1, max_lines_per_slide - 1)
     
     is_long = False
     
@@ -191,11 +190,10 @@ class LyricsApp(tk.Tk):
         settings_frame = ttk.LabelFrame(self, text="Settings", padding=(10, 10))
         settings_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        # Mode Selection
-        ttk.Label(settings_frame, text="Layout Mode:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.mode_var = tk.StringVar(value="Standard")
-        ttk.Radiobutton(settings_frame, text="Standard Mode (1~2 lines)", variable=self.mode_var, value="Standard").grid(row=0, column=1, sticky=tk.W)
-        ttk.Radiobutton(settings_frame, text="Compact Mode (3~4 lines)", variable=self.mode_var, value="Compact").grid(row=0, column=2, sticky=tk.W)
+        # Max Lines Settings
+        ttk.Label(settings_frame, text="슬라이드당 최대 줄 수\n(Max lines per slide):").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.max_lines_var = tk.IntVar(value=2)
+        ttk.Spinbox(settings_frame, from_=1, to=10, textvariable=self.max_lines_var, width=5).grid(row=0, column=1, sticky=tk.W)
         
         # Threshold Settings
         ttk.Label(settings_frame, text="긴 줄 기준 글자 수\n(Long Line Threshold):").grid(row=1, column=0, sticky=tk.W, pady=5)
@@ -225,7 +223,7 @@ class LyricsApp(tk.Tk):
         self.log("====================================")
         self.log("Starting PPT Generation...")
         
-        compact_mode = (self.mode_var.get() == "Compact")
+        max_lines_per_slide = self.max_lines_var.get()
         long_line_threshold = self.threshold_var.get()
         
         template_file = os.path.join(self.base_dir, "template.pptx")
@@ -269,7 +267,7 @@ class LyricsApp(tk.Tk):
                     raw_lyrics = self.get_manual_lyrics(song_title)
                     
                 if raw_lyrics:
-                    append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, compact_mode, long_line_threshold)
+                    append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, max_lines_per_slide, long_line_threshold)
                 else:
                     self.log(f"   Skipped '{song_title}' (No lyrics provided)")
                 
@@ -307,7 +305,7 @@ class LyricsApp(tk.Tk):
                 raw_lyrics = self.get_manual_lyrics(song_title)
                 
             if raw_lyrics and sequence_str:
-                append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, compact_mode, long_line_threshold)
+                append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, max_lines_per_slide, long_line_threshold)
                 output_file = os.path.join(self.base_dir, f"{song_title}.pptx")
                 try:
                     prs.save(output_file)
