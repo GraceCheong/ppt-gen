@@ -35,21 +35,15 @@ def chunk_text(text, max_lines=2):
     chunks = []
     i = 0
     while i < len(lines):
-        if max_lines == 1:
-            # If the line is strictly shorter than the minimum threshold (<= 6 to comfortably catch small words), bundle it with the next
-            if len(lines[i]) <= MIN_LINE_THRESHOLD and i + 1 < len(lines):
-                chunks.append(lines[i] + '\n' + lines[i+1])
-                i += 2
-            else:
-                chunks.append(lines[i])
-                i += 1
-        else:
-            if i + 1 < len(lines):
-                chunks.append(lines[i] + '\n' + lines[i+1])
-                i += 2
-            else:
-                chunks.append(lines[i])
-                i += 1
+        take_lines = max_lines
+        
+        # If the line is strictly shorter than the minimum threshold (<= 6 to comfortably catch small words), bundle it with the next
+        if max_lines == 1 and len(lines[i]) <= MIN_LINE_THRESHOLD and i + 1 < len(lines):
+            take_lines = 2
+            
+        chunk_lines = lines[i:i+take_lines]
+        chunks.append('\n'.join(chunk_lines))
+        i += len(chunk_lines)
                 
     return chunks
 
@@ -57,13 +51,17 @@ def chunk_text(text, max_lines=2):
 # 2. Core PPT Generator Function
 # ==========================================
 
-def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str):
+def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, compact_mode=False):
     lyrics_dict = parse_lyrics_text(lyrics_text)
     sequence_list = [part.strip() for part in sequence_str.split('-') if part.strip()]
     
     # Check entire song text to assign a fixed lines-per-slide value
-    max_lines_per_slide = 2
+    max_lines_per_slide = 4 if compact_mode else 2
+    min_lines = 3 if compact_mode else 1
+    
     LONG_LINE_THRESHOLD = 18
+    is_long = False
+    
     for part in sequence_list:
         base_part = get_base_key(part)
         
@@ -80,10 +78,13 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str):
             lines = [L.strip() for L in test_text.split('\n') if L.strip()]
             for L in lines:
                 if len(L) >= LONG_LINE_THRESHOLD:
-                    max_lines_per_slide = 1
+                    is_long = True
                     break
-        if max_lines_per_slide == 1:
+        if is_long:
             break
+            
+    if is_long:
+        max_lines_per_slide = min_lines
             
     # Find master slide layouts ('Title' & 'Lyrics')
     title_layout = None
@@ -184,6 +185,13 @@ if __name__ == "__main__":
     print("   Lyrics PowerPoint Generator")
     print("====================================")
     
+    print("\n[Settings]")
+    print("1) Standard Mode (1~2 lines per slide)")
+    print("2) Compact Mode (3~4 lines per slide)")
+    mode_input = input("Select layout mode (1 or 2) [Default: 1]: ").strip()
+    compact_mode = (mode_input == "2")
+    print("\n")
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     TEMPLATE_FILE = os.path.join(script_dir, "template.pptx")
     SEQUENCE_FILE = os.path.join(script_dir, "sequences.txt")
@@ -222,7 +230,7 @@ if __name__ == "__main__":
                 print(f"[Warning] '{lyrics_file}' Not Found!")
                 raw_lyrics = get_manual_lyrics(song_title)
                 
-            append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str)
+            append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, compact_mode=compact_mode)
             
         OUTPUT_FILE = os.path.join(script_dir, "integrated_lyrics.pptx")
         prs.save(OUTPUT_FILE)
@@ -250,7 +258,7 @@ if __name__ == "__main__":
             raw_lyrics = get_manual_lyrics(song_title)
             
         if raw_lyrics.strip() and sequence_str.strip():
-            append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str)
+            append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, compact_mode=compact_mode)
             OUTPUT_FILE = os.path.join(script_dir, f"{song_title}.pptx")
             prs.save(OUTPUT_FILE)
             print(f"\n[Success] Created '{OUTPUT_FILE}'.\n")
