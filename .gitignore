@@ -1,7 +1,12 @@
 *.pptx
 !template.pptx
 
+*.txt
+!sequences_sample.txt
+
 *.exe
 build/
 dist/
 *.spec
+
+__pycache__/

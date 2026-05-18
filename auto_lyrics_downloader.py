@@ -44,7 +44,20 @@ def fetch_lyrics_from_bugs(song_title):
         xmp_elem = soup_track.select_one('xmp')
         
         if xmp_elem:
-            return xmp_elem.get_text().strip()
+            raw_text = xmp_elem.get_text().strip()
+            
+            # 1. Split into lines and strip each line
+            lines = [line.strip() for line in raw_text.splitlines()]
+            
+            # 2. Collapse multiple blank lines into at most one blank line
+            cleaned_lines = []
+            for line in lines:
+                if line:
+                    cleaned_lines.append(line)
+                elif cleaned_lines and cleaned_lines[-1] != "":
+                    cleaned_lines.append("")
+            
+            return "\n".join(cleaned_lines).strip()
             
     except Exception as e:
         print(f"⚠️ 벅스 크롤링 중 오류 발생: {e}")
