@@ -1,122 +1,172 @@
-# 🎵 Auto Lyrics PPT Generator
-> **단 클릭(명령어) 몇 번으로, 모든 예배 곡의 가사 PPT를 한 번에 자동 완성해 보세요!**
+# Auto Lyrics PPT Generator - Windows
 
-코딩을 전혀 몰라도 괜찮아요. 준비된 텍스트 파일과 템플릿만 있으면 파이썬(Python) 프로그램이 알아서 **간주, 전주, 글자 크기, 줄바꿈 비율**을 계산해서 가장 깔끔하고 일관된 PPT 파일 1개를 뚝딱 만들어 줘요.
+예배 콘티와 가사 텍스트 파일을 읽어서 하나의 PowerPoint 파일로 만들어 주는 Windows용 도구입니다.
 
----
+`LyricsToPPT.exe`를 실행하면 GUI 창이 열리고, 같은 폴더에 있는 `template.pptx`, `sequences.txt`, 가사 `.txt` 파일을 기준으로 PPT를 생성합니다.
 
-## 🛠️ 한글 사용 가이드
+## 빠른 시작
 
-### 0️⃣ 초기 환경 설정 (처음에 딱 한 번만!)
-프로그램을 실행하려면 파이썬 패키지들이 필요해요. 까만 터미널 창(cmd)을 열고, 아래 명령어를 복사해서 붙여넣은 뒤 엔터를 쳐주세요! (최초 1회만 하시면 됩니다)
-```bash
-pip install python-pptx requests beautifulsoup4
-```
-<br>
-
-### 1️⃣ 템플릿 파일 준비 (`template.pptx`)
-스크립트가 있는 폴더 안에 평소에 사용하는 **예배 PPT 템플릿 파일**을 넣어 주세요.
-
-> ⚠️ 마스터 슬라이드에 들어가서, "제목" 레이아웃과 "가사" 레이아웃이 꼭 따로 있는지 확인해 주세요! <br> 프로그램이 알아서 가사를 쏙 집어넣어요.
-
-### 2️⃣ 곡 순서 정하기 (`sequences.txt`)
-예배 콘티 순서를 메모장으로 만들어 `sequences.txt` 라는 이름으로 저장해 주거나, 폴더 안의 파일을 수정해주세요. <br>
-아래처럼 항상 두 줄 단위를 세트로 묶어서 적어주면 돼요:
+1. 이 폴더에 아래 파일들이 있는지 확인합니다.
 
 ```text
-주를 바라보며
-I-A-B-Inter-A-B-B'-Bridge-B''-Out
-하늘의 것을 구하게 하소서
-I-V1-V2-C-C-Out
+LyricsToPPT.exe
+template.pptx
+sequences.txt
+각 곡 제목.txt
 ```
 
-<br>
+2. `sequences_sample.txt`를 복사해서 `sequences.txt`로 만들거나, 기존 `sequences.txt`를 수정합니다.
 
-### 3️⃣ 가사 준비하기 (`[곡 제목].txt`)
-콘티에 있는 노래들의 가사 파일을 준비해 주세요. <br>
-`주를 바라보며.txt` 처럼 파일을 만들고, `V1`, `C` 등 파트 이름 아래에 엔터를 쳐가며 가사를 적어두면 끝이에요.
+3. 곡 제목과 같은 이름의 가사 파일을 준비합니다.
 
-> 💡 **진짜 중요한 "꿀팁"! (가사 예쁘게 뽑기)**
-> 이 프로그램은 가사가 화면에 뭉텅이로 꽉 차서 답답해 보이는 걸 막아주기 위해, "긴 문장"은 단독 1줄 슬라이드로, "짧은 문장"은 2줄 슬라이드로 예쁘게 묶어주는 스마트한 기능이 들어가 있어요.
+```text
+한나의 노래.txt
+나의 하나님.txt
+함께 지어져 가네.txt
+우리 함께 기도해.txt
+```
 
-<br>
+4. `LyricsToPPT.exe`를 더블클릭합니다.
 
-> 예쁜 PPT를 만들고 싶나요? 
-> 메모장에 가사를 적을 때, 호흡이 끊어지는 구간에서 "엔터(줄바꿈)"를 적당히 쳐서 예쁘게 저장해 두세요! <br>
-> 원본 텍스트 파일이 잘 정돈되어 있을수록 프로그램이 만들어내는 PPT 결과물도 훨씬 예뻐집니다.
+5. 필요한 설정을 확인한 뒤 `Generate PPT` 버튼을 누릅니다.
 
-### 4️⃣ 가사 자동 다운로드 (귀찮다면 선택하세요!)
-일일이 가사 파일을 만들기 귀찮나요? 까만 터미널 창(cmd 기호)에 아래 명령어를 입력하고 엔터를 쳐보세요!
+6. 생성된 `out/integrated_lyrics.pptx` 파일을 PowerPoint에서 엽니다.
 
-```bash
+## 파일 구성
+
+### `template.pptx`
+
+PPT 생성에 사용할 템플릿 파일입니다. 반드시 `LyricsToPPT.exe`와 같은 폴더에 있어야 합니다.
+
+PowerPoint의 슬라이드 마스터에 아래 레이아웃이 준비되어 있어야 합니다.
+
+```text
+Title
+Lyrics
+```
+
+프로그램은 이 레이아웃을 찾아 제목 슬라이드와 가사 슬라이드를 만듭니다.
+
+### `sequences.txt`
+
+예배 곡 순서와 각 곡의 진행 순서를 적는 파일입니다. 두 줄이 한 곡입니다.
+
+```text
+한나의 노래
+I-V1-V2-C-Inter-V2-C-C-Out
+나의 하나님
+I-V1-V1-C-Inter-V2-C-B-C-C
+```
+
+첫 번째 줄은 곡 제목이고, 두 번째 줄은 사용할 파트 순서입니다.
+
+### 가사 파일
+
+각 곡의 가사는 `[곡 제목].txt` 형식으로 저장합니다.
+
+예를 들어 `sequences.txt`에 `한나의 노래`가 있으면, 같은 폴더에 아래 파일이 필요합니다.
+
+```text
+한나의 노래.txt
+```
+
+가사 파일 안에는 파트 이름을 먼저 쓰고, 그 아래에 가사를 적습니다. 파트 사이에는 빈 줄을 하나 넣습니다.
+
+```text
+V1
+가사 첫 번째 줄
+가사 두 번째 줄
+
+C
+후렴 첫 번째 줄
+후렴 두 번째 줄
+```
+
+`sequences.txt`에서 `V1`, `C`, `Inter`, `Out`처럼 적은 파트 이름과 가사 파일의 파트 이름이 맞아야 합니다.
+
+## GUI 설정
+
+`LyricsToPPT.exe`를 실행하면 아래 설정을 바꿀 수 있습니다.
+
+### Max lines per slide
+
+한 슬라이드에 들어갈 최대 줄 수입니다. 기본값은 `2`입니다.
+
+### Long Line Threshold
+
+긴 줄로 판단할 글자 수 기준입니다. 기본값은 `18`입니다.
+
+긴 문장이 많으면 프로그램이 한 슬라이드에 너무 많은 줄을 넣지 않도록 조정합니다.
+
+## 결과 파일
+
+`sequences.txt`가 있으면 모든 곡을 합쳐서 `out/` 폴더 안에 아래 파일을 생성합니다.
+
+```text
+out/integrated_lyrics.pptx
+```
+
+`sequences.txt`가 없으면 프로그램이 단일 곡 모드로 동작하며, 곡 제목과 진행 순서를 직접 입력받습니다. 이 경우 결과 파일은 `out/[곡 제목].pptx`로 저장됩니다.
+
+## 가사 자동 다운로드
+
+가사 파일을 직접 만들기 어렵다면 Python으로 자동 다운로드 스크립트를 실행할 수 있습니다.
+
+먼저 Windows 터미널 또는 PowerShell에서 필요한 패키지를 설치합니다.
+
+```powershell
+pip install requests beautifulsoup4
+```
+
+그 다음 아래 명령어를 실행합니다.
+
+```powershell
 python auto_lyrics_downloader.py
 ```
 
-프로그램이 `sequences.txt` 목록을 읽고, 아직 가사(`.txt`) 파일이 없는 노래가 있다면 벅스(Bugs) 사이트에서 알아서 찾아내 텍스트 파일로 저장해 줘요!
+스크립트는 `sequences.txt`에 있는 곡 목록을 읽고, 없는 가사 `.txt` 파일을 Bugs에서 찾아 저장합니다.
 
-### 5️⃣ PPT 만들기 (최종 결과물 뽑기)
-자, 이제 모든 준비가 끝났어요. 아래 명령어를 터미널에서 실행해 보세요!
-```bash
-python lyrics_to_ppt.py
-```
-불과 1~2초 뒤에 폴더 안에 짠! 🎁 **`integrated_lyrics.pptx`** 라는 최종 PPT 파일이 완성돼요. <br>
-이걸 열어서 바로 예배에 사용하면 됩니다!
+자동 다운로드 결과는 사이트 검색 결과에 따라 다를 수 있으므로, 생성된 가사 파일은 반드시 한 번 확인하세요.
 
----
+## Python으로 직접 실행하기
 
-## 🇺🇸 English Guide
+개발용으로 Python 스크립트를 직접 실행할 수도 있습니다.
 
-### 0️⃣ Initial Environment Setup (Run only once!)
-To run this tool, you need to install a few required Python packages. Open your terminal (cmd) and copy-paste the command below, then hit Enter!
-```bash
+필요한 패키지를 설치합니다.
+
+```powershell
 pip install python-pptx requests beautifulsoup4
 ```
-<br>
 
-### 1️⃣ Prepare the Template (`template.pptx`)
-Ensure your usual **Worship PPT Template file** is placed inside the script folder.
+PPT 생성 GUI를 실행합니다.
 
-> ⚠️ Please go into the Slide Master in PowerPoint and ensure you have specific layouts named **"Title"** and **"Lyrics"**! <br> The program smartly finds them to insert the lyrics.
-
-### 2️⃣ Define Song Sequence (`sequences.txt`)
-Create a notepad file named `sequences.txt` to dictate your setlist order, or edit the existing file. <br>
-Write them in pairs (two lines per set) like this:
-
-```text
-주를 바라보며
-I-A-B-Inter-A-B-B'-Bridge-B''-Out
-하늘의 것을 구하게 하소서
-I-V1-V2-C-C-Out
-```
-
-<br>
-
-### 3️⃣ Prepare Lyrics Files (`[Song Title].txt`)
-Prepare text files for the songs in your setlist. <br>
-Create a file like `주를 바라보며.txt`, and simply type out the lyrics under part names like `V1` or `C`.
-
-> 💡 **Crucial "Pro-Tip"! (How to get beautiful slides)**
-> To prevent text from being crammed into an overcrowded lump, this program features a smart function that automatically bundles "Long sentences" into a single-line slide, and "Short sentences" into a two-line slide.
-
-<br>
-
-> Do you want the most beautiful PPT possible?
-> When writing lyrics in your notepad, break the lines sensibly using "Enter" (line breaks) where pauses feel natural! <br>
-> The cleaner and better-organized your original text file is, the more gorgeous your final PPT will be.
-
-### 4️⃣ Auto Lyric Downloader (Optional, for convenience!)
-Are you tired of manually creating lyrics files? Open your black terminal window (cmd), copy the command below, and hit Enter!
-
-```bash
-python auto_lyrics_downloader.py
-```
-
-The program will read the `sequences.txt` list, search the Bugs Music website for any missing lyrics, and automatically save them as text files for you!
-
-### 5️⃣ Generate PPT (Final Output)
-Now, everything is ready. Run the command below in your terminal!
-```bash
+```powershell
 python lyrics_to_ppt.py
 ```
-After just 1~2 seconds, voilà! 🎁 A final fully assembled file named **`integrated_lyrics.pptx`** will be generated. <br>
-Open it and it's ready for your worship service!
+
+## Windows에서 자주 생기는 문제
+
+### `template.pptx`를 찾을 수 없다고 나오는 경우
+
+`template.pptx`가 `LyricsToPPT.exe`와 같은 폴더에 있는지 확인하세요.
+
+### 가사 파일을 찾을 수 없다고 나오는 경우
+
+`sequences.txt`의 곡 제목과 가사 파일명이 완전히 같은지 확인하세요.
+
+예:
+
+```text
+sequences.txt: 한나의 노래
+가사 파일명: 한나의 노래.txt
+```
+
+띄어쓰기까지 같아야 합니다.
+
+### PPT 저장에 실패하는 경우
+
+생성하려는 `out/integrated_lyrics.pptx` 파일이 PowerPoint에서 열려 있으면 저장에 실패할 수 있습니다. 열려 있는 PPT 파일을 닫고 다시 실행하세요.
+
+### Windows 보안 경고가 나오는 경우
+
+처음 실행할 때 Windows SmartScreen 경고가 나올 수 있습니다. 프로젝트에서 직접 빌드한 실행 파일이라면 `추가 정보`를 누른 뒤 실행할 수 있습니다.

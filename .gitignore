@@ -10,3 +10,7 @@ dist/
 *.spec
 
 __pycache__/
+
+out/
+Release/
+*.zip

@@ -47,6 +47,16 @@ def chunk_text(text, max_lines=2):
                 
     return chunks
 
+def set_editable_text(shape, text):
+    text_frame = shape.text_frame
+    text_frame.clear()
+
+    lines = text.split('\n') if text else [""]
+    for idx, line in enumerate(lines):
+        paragraph = text_frame.paragraphs[0] if idx == 0 else text_frame.add_paragraph()
+        run = paragraph.add_run()
+        run.text = line
+
 # ==========================================
 # 2. Core PPT Generator Function
 # ==========================================
@@ -100,7 +110,7 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, max_lines_p
     title_slide = prs.slides.add_slide(title_layout)
     for shape in title_slide.placeholders:
         if shape.has_text_frame:
-            shape.text_frame.text = song_title
+            set_editable_text(shape, song_title)
             break
 
     for idx, part in enumerate(sequence_list):
@@ -132,10 +142,10 @@ def append_lyrics_to_ppt(prs, song_title, lyrics_text, sequence_str, max_lines_p
             song_title_placeholder = placeholders[1] if len(placeholders) > 1 else None
                             
             if lyrics_placeholder is not None:
-                lyrics_placeholder.text_frame.text = chunk
+                set_editable_text(lyrics_placeholder, chunk)
                 
             if song_title_placeholder is not None:
-                song_title_placeholder.text_frame.text = song_title
+                set_editable_text(song_title_placeholder, song_title)
 
 # ==========================================
 # 3. GUI Implementation
@@ -219,6 +229,11 @@ class LyricsApp(tk.Tk):
         dialog = MultilineDialog(self, "Input Lyrics", f"Please paste the lyrics for '{song_title}' below:")
         return dialog.result or ""
 
+    def get_output_dir(self):
+        output_dir = os.path.join(self.base_dir, "out")
+        os.makedirs(output_dir, exist_ok=True)
+        return output_dir
+
     def generate_ppt(self):
         self.log("====================================")
         self.log("Starting PPT Generation...")
@@ -271,11 +286,11 @@ class LyricsApp(tk.Tk):
                 else:
                     self.log(f"   Skipped '{song_title}' (No lyrics provided)")
                 
-            output_file = os.path.join(self.base_dir, "integrated_lyrics.pptx")
+            output_file = os.path.join(self.get_output_dir(), "integrated_lyrics.pptx")
             try:
                 prs.save(output_file)
                 self.log(f"\n[Success] Created '{output_file}'.\n")
-                messagebox.showinfo("Success", f"PPT successfully generated!\nSaved as: integrated_lyrics.pptx")
+                messagebox.showinfo("Success", f"PPT successfully generated!\nSaved as: out/integrated_lyrics.pptx")
             except Exception as e:
                 self.log(f"[Error] Failed to save PPT: {e}")
                 
@@ -306,11 +321,11 @@ class LyricsApp(tk.Tk):
                 
             if raw_lyrics and sequence_str:
                 append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, max_lines_per_slide, long_line_threshold)
-                output_file = os.path.join(self.base_dir, f"{song_title}.pptx")
+                output_file = os.path.join(self.get_output_dir(), f"{song_title}.pptx")
                 try:
                     prs.save(output_file)
                     self.log(f"\n[Success] Created '{output_file}'.\n")
-                    messagebox.showinfo("Success", f"PPT successfully generated!\nSaved as: {song_title}.pptx")
+                    messagebox.showinfo("Success", f"PPT successfully generated!\nSaved as: out/{song_title}.pptx")
                 except Exception as e:
                     self.log(f"[Error] Failed to save PPT: {e}")
             else:
