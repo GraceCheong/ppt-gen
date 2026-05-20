@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 # 1. Web Crawler Function
 # ==========================================
 
-def fetch_lyrics_from_bugs(song_title):
+def fetch_lyrics_from_bugs(song_title, log_func=print):
     """
     Crawl lyrics through Bugs search.
     """
@@ -60,7 +60,7 @@ def fetch_lyrics_from_bugs(song_title):
             return "\n".join(cleaned_lines).strip()
             
     except Exception as e:
-        print(f"⚠️ 벅스 크롤링 중 오류 발생: {e}")
+        log_func(f"[오류] 벅스 크롤링 중 오류가 발생했습니다: {e}")
         
     return None
 
@@ -68,25 +68,38 @@ def fetch_lyrics_from_bugs(song_title):
 # 2. Main Execution
 # ==========================================
 
-def download_missing_lyrics():
-    print("====================================")
-    print("   Lyrics Auto-Downloader")
-    print("====================================")
+def read_song_titles_from_sequence_file(sequence_file):
+    with open(sequence_file, "r", encoding="utf-8-sig") as f:
+        lines = [line.strip() for line in f.readlines() if line.strip()]
+
+    # Parse sequences in pairs of [Title, Sequence].
+    return lines[0::2]
+
+
+def download_missing_lyrics(song_titles=None, base_dir=None, log_func=print, delay_seconds=1.5):
+    log_func("====================================")
+    log_func("가사 자동 다운로드")
+    log_func("====================================")
     
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    sequence_file = os.path.join(script_dir, "sequences.txt")
-    if not os.path.exists(sequence_file):
-        print(f"❌ '{sequence_file}' 파일이 없습니다. 먼저 생성해주세요.")
+    script_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
+
+    if song_titles is None:
+        sequence_file = os.path.join(script_dir, "sequences.txt")
+        if not os.path.exists(sequence_file):
+            log_func(f"[오류] '{sequence_file}' 파일이 없습니다.")
+            return
+
+        song_titles = read_song_titles_from_sequence_file(sequence_file)
+    else:
+        song_titles = [title.strip() for title in song_titles if title.strip()]
+
+    if not song_titles:
+        log_func("[오류] 다운로드할 곡 제목이 없습니다.")
         return
 
-    with open(sequence_file, "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f.readlines() if line.strip()]
-        
-    # Parse sequences.txt in pairs of [Title, Sequence]
     found_missing = False
     
-    for i in range(0, len(lines), 2):
-        song_title = lines[i]
+    for song_title in song_titles:
         lyrics_file = os.path.join(script_dir, f"{song_title}.txt")
         
         # Attempt download if lyrics file is missing or empty!
@@ -94,34 +107,34 @@ def download_missing_lyrics():
         
         if not os.path.exists(lyrics_file):
             needs_download = True
-            print(f"🔍 '{lyrics_file}' 파일이 없습니다. 새로 다운로드합니다...")
+            log_func(f"[확인] '{lyrics_file}' 파일이 없어 다운로드합니다.")
         else:
             # Check if file exists but is empty
             with open(lyrics_file, 'r', encoding='utf-8') as chk_f:
                 if not chk_f.read().strip():
                     needs_download = True
-                    print(f"🔍 '{lyrics_file}' 파일이 비어있습니다. 새로 다운로드합니다...")
+                    log_func(f"[확인] '{lyrics_file}' 파일이 비어 있어 다운로드합니다.")
                     
         if needs_download:
             found_missing = True
-            lyrics_text = fetch_lyrics_from_bugs(song_title)
+            lyrics_text = fetch_lyrics_from_bugs(song_title, log_func=log_func)
             
             if lyrics_text:
                 with open(lyrics_file, "w", encoding="utf-8") as out_f:
                     out_f.write(lyrics_text)
-                print(f"✅ '{song_title}' 가사 다운로드 및 '{lyrics_file}' 저장 완료!\n")
+                log_func(f"[완료] '{song_title}' 가사를 '{lyrics_file}'에 저장했습니다.\n")
             else:
-                print(f"❌ '{song_title}' 가사를 자동으로 찾을 수 없습니다. 직접 텍스트 파일을 채워주세요.\n")
+                log_func(f"[안내] '{song_title}' 가사를 자동으로 찾지 못했습니다. 직접 입력해 주세요.\n")
                 
             # Short delay to prevent server overload and blocks
-            time.sleep(1.5) 
+            time.sleep(delay_seconds) 
         else:
-            print(f"⏭️ '{lyrics_file}' 파일이 이미 있고 내용도 있습니다. (스킵)")
+            log_func(f"[안내] '{lyrics_file}' 파일이 이미 준비되어 있어 건너뜁니다.")
 
     if not found_missing:
-        print("\n🎉 모든 곡의 가사 파일이 이미 준비되어 있습니다!")
+        log_func("\n[완료] 모든 곡의 가사 파일이 이미 준비되어 있습니다.")
     else:
-        print("\n작업이 완료되었습니다. 확인 후 'python lyrics_to_ppt.py'를 실행하세요.")
+        log_func("\n[완료] 가사 다운로드 작업이 끝났습니다. 가사 파일 내용을 확인하세요.")
 
 if __name__ == "__main__":
     download_missing_lyrics()

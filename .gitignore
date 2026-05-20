@@ -1,16 +1,24 @@
+# Generated PowerPoint files
 *.pptx
 !template.pptx
 
+# Local repertoire and lyrics files
 *.txt
 !sequences_sample.txt
 
+# Build outputs
 *.exe
 build/
 dist/
 *.spec
+!LyricsToPPT.spec
 
+# Python cache
 __pycache__/
+*.py[cod]
+.pytest_cache/
 
+# Generated app output and release archives
 out/
 Release/
 *.zip

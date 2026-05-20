@@ -1,8 +1,6 @@
-한나의 노래
-I-V1-V2-C-Inter-V2-C-C-Out
-나의 하나님
-I-V1-V1-C-Inter-V2-C-B-C-C
-함께 지어져 가네 
-I-V-C-Inter-V-C-C-Out
-우리 함께 기도해
-I-V-C-I-V-C-C-V-C-C
+믿음이 없이는 
+I-V-V-B-C-INTER-V-B-C-O
+주님 마음 내게 주소서 
+V-V-C-B-C-O
+주의 자녀로 산다는 것은 
+I-V1-V2-C-V3-INTER-V4-C-O

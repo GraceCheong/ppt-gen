@@ -16,7 +16,10 @@ VERSION_RE = re.compile(r"^v1\.0\.(\d+)$")
 REQUIRED_FILES = (
     "LyricsToPPT.exe",
     "template.pptx",
-    "sequences.txt",
+    "sequences_sample.txt",
+    "README.md",
+    "assets/atempo.png",
+    "assets/background.png",
 )
 SPEC_FILE_NAME = "LyricsToPPT.spec"
 EXE_FILE_NAME = "LyricsToPPT.exe"
@@ -24,15 +27,6 @@ EXE_FILE_NAME = "LyricsToPPT.exe"
 
 def project_root() -> Path:
     return Path(__file__).resolve().parent
-
-
-def read_sequence_titles(sequence_file: Path) -> list[str]:
-    lines = [
-        line.strip()
-        for line in sequence_file.read_text(encoding="utf-8-sig").splitlines()
-        if line.strip()
-    ]
-    return lines[0::2]
 
 
 def find_release_dirs(release_dir: Path) -> list[tuple[int, Path]]:
@@ -103,25 +97,7 @@ def collect_release_files(root: Path) -> list[Path]:
     if missing:
         raise FileNotFoundError("Missing required release file(s): " + ", ".join(missing))
 
-    release_files = [root / name for name in REQUIRED_FILES]
-
-    sequence_titles = read_sequence_titles(root / "sequences.txt")
-    missing_lyrics: list[str] = []
-
-    for title in sequence_titles:
-        lyric_file = root / f"{title}.txt"
-        if lyric_file.is_file():
-            release_files.append(lyric_file)
-        else:
-            missing_lyrics.append(lyric_file.name)
-
-    if missing_lyrics:
-        raise FileNotFoundError(
-            "Missing lyric file(s) referenced by sequences.txt: "
-            + ", ".join(missing_lyrics)
-        )
-
-    return release_files
+    return [root / name for name in REQUIRED_FILES]
 
 
 def create_release_zip(version: str, release_files: list[Path], force: bool) -> Path:
@@ -137,7 +113,7 @@ def create_release_zip(version: str, release_files: list[Path], force: bool) -> 
     compression = zipfile.ZIP_DEFLATED
     with zipfile.ZipFile(zip_path, "w", compression=compression) as zip_file:
         for file_path in release_files:
-            archive_name = Path(APP_DIR_NAME) / file_path.name
+            archive_name = Path(APP_DIR_NAME) / file_path.relative_to(root)
             zip_file.write(file_path, archive_name.as_posix())
 
     return zip_path
@@ -172,7 +148,7 @@ def main() -> int:
     print(f"Created {zip_path.relative_to(root)}")
     print("Included files:")
     for file_path in release_files:
-        print(f"  {APP_DIR_NAME}/{file_path.name}")
+        print(f"  {APP_DIR_NAME}/{file_path.relative_to(root).as_posix()}")
 
     return 0
 
