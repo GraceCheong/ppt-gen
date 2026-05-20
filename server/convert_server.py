@@ -3,19 +3,20 @@ PPT 생성/변환 서버
 
 실행 방법:
     pip install -r server/requirements.txt
-    uvicorn server.convert_server:app --host 0.0.0.0 --port 8000
+    uvicorn server.convert_server:app --host 0.0.0.0 --port 8010
 
 PNG 변환에는 Windows + Microsoft PowerPoint 또는 LibreOffice가 필요합니다.
 """
 
 import asyncio
+import datetime
 import json
 import os
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pptx import Presentation
 
@@ -25,10 +26,18 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 from constants import ASSETS_DIR_NAME, TEMPLATE_DIR_NAME, TEMPLATE_DOWNLOAD_URL
-from ppt_service import LocalOfficeUnavailable, NoLyricsError, build_integrated_pptx, build_songlist_card_png
+from ppt_service import (
+    LocalOfficeUnavailable,
+    NoLyricsError,
+    build_integrated_pptx,
+    build_songlist_card_png,
+)
+from powerpoint_com import create_powerpoint_application, open_presentation_hidden
 
 PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 TEMPLATE_SYNC_INTERVAL_SECONDS = 10 * 60
+GENERATOR_VERSION = "direct-python-pptx-v4"
+MAX_ERROR_REPORT_TEXT = 12000
 
 app = FastAPI(title="PO,RR PPT Server", version="1.1.0")
 
@@ -36,6 +45,45 @@ app = FastAPI(title="PO,RR PPT Server", version="1.1.0")
 _executor = ThreadPoolExecutor(max_workers=1)
 _template_executor = ThreadPoolExecutor(max_workers=1)
 _template_sync_task: asyncio.Task | None = None
+
+
+def _error_report_dir() -> str:
+    path = os.path.join(ROOT_DIR, "out", "error_reports")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _trim_report_text(value, limit: int = MAX_ERROR_REPORT_TEXT) -> str:
+    text = "" if value is None else str(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[trimmed]"
+
+
+def _sanitize_report(data: dict, request: Request) -> dict:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    client_host = request.client.host if request.client else ""
+    extra = data.get("extra") if isinstance(data.get("extra"), dict) else {}
+
+    return {
+        "received_at": now.isoformat(),
+        "client_host": client_host,
+        "reported_at": _trim_report_text(data.get("reported_at"), 200),
+        "context": _trim_report_text(data.get("context"), 300),
+        "message": _trim_report_text(data.get("message"), 1000),
+        "traceback": _trim_report_text(data.get("traceback")),
+        "extra": extra,
+        "log_tail": data.get("log_tail") if isinstance(data.get("log_tail"), list) else [],
+        "runtime": data.get("runtime") if isinstance(data.get("runtime"), dict) else {},
+    }
+
+
+def _save_error_report(report: dict) -> str:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    file_path = os.path.join(_error_report_dir(), f"{now:%Y-%m-%d}.jsonl")
+    with open(file_path, "a", encoding="utf-8") as report_file:
+        report_file.write(json.dumps(report, ensure_ascii=False) + "\n")
+    return file_path
 
 
 def _server_template_dir() -> str:
@@ -131,10 +179,9 @@ def _convert_sync(pptx_path: str, png_path: str) -> None:
 
     comtypes.CoInitialize()
     try:
-        ppt = comtypes.client.CreateObject("PowerPoint.Application")
-        ppt.Visible = 1
+        ppt = create_powerpoint_application(comtypes.client)
         try:
-            prs_com = ppt.Presentations.Open(pptx_abs, ReadOnly=-1, WithWindow=0)
+            prs_com = open_presentation_hidden(ppt, pptx_abs)
             try:
                 prs_com.Slides(1).Export(png_abs, "PNG", width_px, height_px)
             finally:
@@ -188,7 +235,30 @@ def _sequence_entries_from_payload(data: dict) -> list[tuple[str, str]]:
 def health():
     import importlib.util
     com_available = importlib.util.find_spec("comtypes") is not None
-    return {"status": "ok", "comtypes": com_available}
+    return {
+        "status": "ok",
+        "comtypes": com_available,
+        "generator": GENERATOR_VERSION,
+    }
+
+
+@app.post("/client-error-report")
+async def client_error_report(request: Request):
+    try:
+        data = await request.json()
+    except Exception as e:
+        raise HTTPException(400, detail=f"오류 리포트 JSON 형식이 올바르지 않습니다: {e}")
+
+    if not isinstance(data, dict):
+        raise HTTPException(400, detail="오류 리포트는 JSON object여야 합니다.")
+
+    report = _sanitize_report(data, request)
+    file_path = _save_error_report(report)
+    print(
+        "[client-error-report] "
+        f"context={report.get('context')} message={report.get('message')} saved={file_path}"
+    )
+    return {"status": "ok"}
 
 
 @app.post("/convert", response_class=Response)
@@ -238,6 +308,17 @@ async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...
     except (TypeError, ValueError):
         raise HTTPException(400, detail="max_lines_per_slide는 숫자여야 합니다.")
 
+    try:
+        max_chars_per_line = int(data.get("max_chars_per_line") or 18)
+    except (TypeError, ValueError):
+        raise HTTPException(400, detail="max_chars_per_line은 숫자여야 합니다.")
+
+    raw_font_size = data.get("lyrics_font_size")
+    try:
+        lyrics_font_size = None if raw_font_size in (None, "", "default") else float(raw_font_size)
+    except (TypeError, ValueError):
+        raise HTTPException(400, detail="lyrics_font_size는 숫자여야 합니다.")
+
     with tempfile.TemporaryDirectory() as tmp:
         template_path = os.path.join(tmp, "template.pptx")
         output_path = os.path.join(tmp, "output.pptx")
@@ -253,6 +334,8 @@ async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...
                 lyrics_by_title,
                 output_path,
                 max_lines_per_slide,
+                max_chars_per_line,
+                lyrics_font_size,
             )
         except NoLyricsError as e:
             raise HTTPException(400, detail=str(e))
@@ -268,7 +351,11 @@ async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...
     return Response(
         content=pptx_data,
         media_type=PPTX_MEDIA_TYPE,
-        headers={"X-Appended-Count": str(result["appended_count"])},
+        headers={
+            "X-Appended-Count": str(result["appended_count"]),
+            "X-PORR-Generator": GENERATOR_VERSION,
+            "X-PORR-Slide-Plan": "Home,Worship,TitleLyricsRepeated,PrayerOrHome",
+        },
     )
 
 

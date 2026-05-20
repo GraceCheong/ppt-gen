@@ -1,27 +1,51 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os as _os
 import sys as _sys
 
 _is_win = _sys.platform == "win32"
+_root = _os.path.abspath(_os.path.join(SPECPATH, '..'))
+_icon_file = _os.path.join(_root, 'assets', 'atempo.ico' if _is_win else 'atempo.png')
 _hiddenimports = ['gdown']
 if _is_win:
     _hiddenimports.extend(['comtypes', 'comtypes.client'])
 
+_excludes = [
+    'PyQt5',
+    'PyQt6',
+    'PySide2',
+    'PySide6',
+    'IPython',
+    'astroid',
+    'black',
+    'dask',
+    'jedi',
+    'matplotlib',
+    'nbformat',
+    'pandas',
+    'pytest',
+    'scipy',
+    'sphinx',
+    'zmq',
+]
+if not _is_win:
+    _excludes.append('comtypes')
+
 a = Analysis(
-    ['src/main.py'],
-    pathex=['src'],
+    [_os.path.join(_root, 'src', 'main.py')],
+    pathex=[_os.path.join(_root, 'src')],
     binaries=[],
     datas=[
-        ('assets/atempo.png', 'assets'),
-        ('assets/background.png', 'assets'),
-        ('assets/templates/template 2.pptx', 'assets/templates'),
-        ('assets/songlist.pptx', 'assets'),
-        ('assets/sequences_sample.txt', 'assets'),
+        (_os.path.join(_root, 'assets', 'atempo.ico'), 'assets'),
+        (_os.path.join(_root, 'assets', 'atempo.png'), 'assets'),
+        (_os.path.join(_root, 'assets', 'logo.png'), 'assets'),
+        (_os.path.join(_root, 'assets', 'background.png'), 'assets'),
+(_os.path.join(_root, 'assets', 'sequences_sample.txt'), 'assets'),
     ],
     hiddenimports=_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[] if _is_win else ['comtypes'],
+    excludes=_excludes,
     noarchive=False,
     optimize=0,
 )
@@ -33,7 +57,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='LyricsToPPT',
+    name='PORR_atempo',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -46,13 +70,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/atempo.png',
+    icon=_icon_file,
 )
 
 if not _is_win:
     app = BUNDLE(
         exe,
-        name='LyricsToPPT.app',
-        icon='assets/atempo.png',
+        name='PORR_atempo.app',
+        icon=_icon_file,
         bundle_identifier='com.atempo.lyricstoppt',
     )

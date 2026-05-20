@@ -6,7 +6,8 @@ import tempfile
 
 from pptx import Presentation
 
-from ppt_builder import append_lyrics_to_ppt
+from ppt_builder import append_closing_slide, append_lyrics_to_ppt, reset_integrated_ppt
+from powerpoint_com import create_powerpoint_application, open_presentation_hidden
 from songlist_builder import build_songlist_card, _find_libreoffice
 
 
@@ -24,8 +25,11 @@ def build_integrated_pptx(
     lyrics_by_title,
     output_pptx_path,
     max_lines_per_slide=2,
+    max_chars_per_line=18,
+    lyrics_font_size=None,
 ):
     prs = Presentation(template_path)
+    reset_integrated_ppt(prs)
     appended_count = 0
     skipped_titles = []
 
@@ -41,11 +45,15 @@ def build_integrated_pptx(
             raw_lyrics,
             sequence_str,
             max_lines_per_slide,
+            max_chars_per_line=max_chars_per_line,
+            lyrics_font_size=lyrics_font_size,
         )
         appended_count += 1
 
     if appended_count == 0:
         raise NoLyricsError("생성할 가사가 없습니다.")
+
+    append_closing_slide(prs)
 
     output_dir = os.path.dirname(os.path.abspath(output_pptx_path))
     if output_dir:
@@ -75,10 +83,9 @@ def _save_pptx_via_powerpoint_com(source_pptx_path, output_pptx_path):
 
     comtypes.CoInitialize()
     try:
-        powerpoint = comtypes.client.CreateObject("PowerPoint.Application")
-        powerpoint.Visible = 1
+        powerpoint = create_powerpoint_application(comtypes.client)
         try:
-            prs_com = powerpoint.Presentations.Open(source_abs, ReadOnly=-1, WithWindow=0)
+            prs_com = open_presentation_hidden(powerpoint, source_abs)
             try:
                 # 24 = ppSaveAsOpenXMLPresentation (.pptx)
                 prs_com.SaveAs(temp_output, 24)
@@ -130,6 +137,8 @@ def build_integrated_pptx_with_local_office(
     lyrics_by_title,
     output_pptx_path,
     max_lines_per_slide=2,
+    max_chars_per_line=18,
+    lyrics_font_size=None,
 ):
     """Build a PPTX locally and finalize it with PowerPoint COM, then LibreOffice if needed."""
     errors = []
@@ -142,6 +151,8 @@ def build_integrated_pptx_with_local_office(
             lyrics_by_title,
             draft_path,
             max_lines_per_slide,
+            max_chars_per_line=max_chars_per_line,
+            lyrics_font_size=lyrics_font_size,
         )
 
         try:

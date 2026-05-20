@@ -1,8 +1,14 @@
 import os
+import subprocess
 import sys
 import threading
+import tempfile
 import tkinter as tk
 import tkinter.font as tkfont
+import hashlib
+import io
+import traceback
+import zipfile
 from tkinter import ttk, messagebox
 import customtkinter as ctk
 try:
@@ -23,8 +29,9 @@ from ppt_service import (
     build_integrated_pptx_with_local_office,
     build_songlist_card_png,
 )
+from songlist_builder import export_pptx_to_png
+from error_reporter import format_exception, report_error_async
 from constants import *
-
 
 
 def hex_to_rgb(color):
@@ -122,6 +129,66 @@ class MultilineDialog(ctk.CTkToplevel):
     def on_cancel(self):
         self.destroy()
 
+
+class BusyDialog(ctk.CTkToplevel):
+    def __init__(self, parent, title, message, on_cancel=None):
+        super().__init__(parent)
+        self._on_cancel = on_cancel
+        self.title(title)
+        self.geometry("360x150")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.protocol("WM_DELETE_WINDOW", self.on_cancel if on_cancel else lambda: None)
+
+        content = ctk.CTkFrame(self, fg_color=PANEL_BG, corner_radius=16)
+        content.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
+        content.columnconfigure(0, weight=1)
+
+        self.message_label = ctk.CTkLabel(
+            content,
+            text=message,
+            text_color=TEXT_FG,
+            font=("맑은 고딕", 13, "bold"),
+            wraplength=300,
+            justify=tk.CENTER,
+        )
+        self.message_label.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 14))
+
+        self.progress = ctk.CTkProgressBar(
+            content,
+            mode="indeterminate",
+            height=10,
+            progress_color=ACCENT,
+            fg_color=PANEL_SOFT_BG,
+        )
+        self.progress.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 18))
+        self.progress.start()
+
+        self.update_idletasks()
+        x = parent.winfo_rootx() + max(0, (parent.winfo_width() - self.winfo_width()) // 2)
+        y = parent.winfo_rooty() + max(0, (parent.winfo_height() - self.winfo_height()) // 2)
+        self.geometry(f"+{x}+{y}")
+
+    def set_message(self, message):
+        self.message_label.configure(text=message)
+        self.update_idletasks()
+
+    def on_cancel(self):
+        if self._on_cancel:
+            self._on_cancel()
+
+    def close(self):
+        try:
+            self.progress.stop()
+        except Exception:
+            pass
+        self.destroy()
+
+
+class OperationCancelled(RuntimeError):
+    pass
+
+
 class LyricsApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -150,7 +217,14 @@ class LyricsApp(ctk.CTk):
 
         self._background_image = None
         self._background_cache_key = None
+        self._logo_image = None
+        self._busy_dialog = None
+        self._template_preview_request_id = 0
+        self._template_preview_rendering = set()
+        self._template_preview_failed = set()
+        self._recent_log_lines = []
         self.brand_font_family = self.resolve_font_family(BRAND_FONT_CANDIDATES)
+        self.install_error_reporting_hooks()
         self.setup_style()
         self.create_widgets()
         self.refresh_template_options()
@@ -158,6 +232,14 @@ class LyricsApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def configure_window_icon(self):
+        ico_file = self.find_asset_file(ICON_ICO_FILE_NAME)
+        if ico_file and sys.platform == "win32":
+            try:
+                self.iconbitmap(ico_file)
+                return
+            except tk.TclError:
+                pass
+
         icon_file = self.find_asset_file(ICON_FILE_NAME)
         if icon_file:
             try:
@@ -178,6 +260,100 @@ class LyricsApp(ctk.CTk):
                 self.iconbitmap(default="")
             except tk.TclError:
                 pass
+
+    def install_error_reporting_hooks(self):
+        self._error_hooks_installed = True
+        self._previous_sys_excepthook = sys.excepthook
+        self._previous_threading_excepthook = getattr(threading, "excepthook", None)
+
+        def sys_hook(exc_type, exc, tb):
+            self.report_exception("sys.excepthook", exc, tb)
+            if self._previous_sys_excepthook:
+                self._previous_sys_excepthook(exc_type, exc, tb)
+
+        def thread_hook(args):
+            self.report_exception(f"threading.{args.thread.name}", args.exc_value, args.exc_traceback)
+            if self._previous_threading_excepthook:
+                self._previous_threading_excepthook(args)
+
+        sys.excepthook = sys_hook
+        if hasattr(threading, "excepthook"):
+            threading.excepthook = thread_hook
+
+    def restore_error_reporting_hooks(self):
+        if not getattr(self, "_error_hooks_installed", False):
+            return
+        if getattr(self, "_previous_sys_excepthook", None):
+            sys.excepthook = self._previous_sys_excepthook
+        if hasattr(threading, "excepthook") and getattr(self, "_previous_threading_excepthook", None):
+            threading.excepthook = self._previous_threading_excepthook
+        self._error_hooks_installed = False
+
+    def destroy(self):
+        self.restore_error_reporting_hooks()
+        super().destroy()
+
+    def report_callback_exception(self, exc_type, exc, tb):
+        self.report_exception("tkinter callback", exc, tb)
+        traceback.print_exception(exc_type, exc, tb)
+
+    def report_exception(self, context, exc, tb=None, extra=None):
+        try:
+            server_url = self.get_server_url() if hasattr(self, "server_url_var") else DEFAULT_SERVER_URL
+            report_error_async(
+                server_url,
+                context=context,
+                message=str(exc),
+                traceback_text=format_exception(exc, tb),
+                extra=self.build_error_report_extra(context, extra),
+                log_tail=getattr(self, "_recent_log_lines", []),
+            )
+        except Exception:
+            pass
+
+    def build_error_report_extra(self, context, extra=None):
+        stack = traceback.extract_stack()
+        caller_frame = None
+        for frame in reversed(stack):
+            if frame.name not in ("build_error_report_extra", "report_exception", "report_error_async"):
+                caller_frame = frame
+                break
+
+        selected_template = None
+        if hasattr(self, "template_var"):
+            selected_template = self.template_files.get(self.template_var.get())
+
+        settings = {
+            "server_url": self.get_server_url() if hasattr(self, "server_url_var") else DEFAULT_SERVER_URL,
+            "max_lines_per_slide": self.max_lines_var.get() if hasattr(self, "max_lines_var") else None,
+            "max_chars_per_line": self.max_chars_var.get() if hasattr(self, "max_chars_var") else None,
+            "lyrics_font_size": self.lyrics_font_size_var.get() if hasattr(self, "lyrics_font_size_var") else None,
+            "template": self.template_var.get() if hasattr(self, "template_var") else None,
+            "template_path": selected_template,
+            "app_title": APP_WINDOW_TITLE,
+        }
+
+        state = {
+            "context": context,
+            "current_song_title": self.current_song_title,
+            "sequence_count": len(self.sequence_entries),
+            "lyrics_store_count": len(self.lyrics_store),
+            "template_download_running": self._template_download_running,
+            "template_refresh_complete": self._template_refresh_complete,
+            "busy_dialog_open": self._busy_dialog is not None,
+        }
+
+        return {
+            "caller": {
+                "file": caller_frame.filename if caller_frame else None,
+                "line": caller_frame.lineno if caller_frame else None,
+                "function": caller_frame.name if caller_frame else None,
+                "code": caller_frame.line if caller_frame else None,
+            },
+            "settings": settings,
+            "state": state,
+            "details": extra if isinstance(extra, dict) else {},
+        }
 
     def find_background_file(self):
         return self.find_asset_file(BACKGROUND_FILE_NAME)
@@ -231,6 +407,8 @@ class LyricsApp(ctk.CTk):
                 for file_name in sorted(files, key=str.casefold):
                     if not file_name.lower().endswith(".pptx"):
                         continue
+                    if file_name.casefold() == os.path.basename(SONGLIST_TEMPLATE_FILE_NAME).casefold():
+                        continue
 
                     path = os.path.join(root, file_name)
                     display_name = os.path.relpath(path, template_dir).replace(os.sep, " / ")
@@ -250,6 +428,7 @@ class LyricsApp(ctk.CTk):
         if not values:
             self.template_combo.configure(values=["템플릿 없음"], state="disabled")
             self.template_var.set("템플릿 없음")
+            self.update_template_preview()
             return
 
         self.template_combo.configure(values=values, state="normal")
@@ -257,6 +436,150 @@ class LyricsApp(ctk.CTk):
 
         if current not in self.template_files:
             self.template_var.set(values[0])
+        self.update_template_preview()
+
+    def fit_template_preview_image(self, source_image):
+        preview = source_image.convert("RGBA")
+        resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+        preview.thumbnail(TEMPLATE_PREVIEW_IMAGE_MAX, resample)
+
+        canvas = Image.new(
+            "RGBA",
+            (TEMPLATE_PREVIEW_WIDTH, TEMPLATE_PREVIEW_HEIGHT),
+            (255, 255, 255, 0),
+        )
+        x = (TEMPLATE_PREVIEW_WIDTH - preview.width) // 2
+        y = (TEMPLATE_PREVIEW_HEIGHT - preview.height) // 2
+        canvas.alpha_composite(preview, (x, y))
+        return canvas
+
+    def build_template_preview_image(self, template_file):
+        if Image is None or not template_file or not os.path.exists(template_file):
+            return None
+
+        try:
+            with zipfile.ZipFile(template_file) as pptx:
+                thumbnail_name = next(
+                    (
+                        name
+                        for name in pptx.namelist()
+                        if name.casefold().startswith("docprops/thumbnail.")
+                    ),
+                    None,
+                )
+                if not thumbnail_name:
+                    return None
+
+                thumbnail_data = pptx.read(thumbnail_name)
+
+            return self.fit_template_preview_image(Image.open(io.BytesIO(thumbnail_data)))
+        except Exception:
+            return None
+
+    def get_template_preview_cache_file(self, template_file):
+        stat = os.stat(template_file)
+        key = f"{os.path.abspath(template_file)}|{stat.st_mtime_ns}|{stat.st_size}"
+        digest = hashlib.sha1(key.encode("utf-8", "surrogatepass")).hexdigest()
+        cache_dir = os.path.join(self.get_output_dir(), "template_previews")
+        return os.path.join(cache_dir, f"{digest}.png")
+
+    def build_template_preview_image_from_file(self, image_file):
+        if Image is None or not image_file or not os.path.exists(image_file):
+            return None
+
+        try:
+            with Image.open(image_file) as preview:
+                return self.fit_template_preview_image(preview)
+        except Exception:
+            return None
+
+    def hide_template_preview(self):
+        if not hasattr(self, "template_preview_label"):
+            return
+
+        try:
+            self.template_preview_label.place_forget()
+            self.template_preview_label.configure(image="", text="")
+        finally:
+            self._template_preview_photo = None
+
+    def show_template_preview(self, preview_image):
+        if preview_image is None or ImageTk is None:
+            self.hide_template_preview()
+            return
+
+        preview_photo = ImageTk.PhotoImage(preview_image)
+        self.template_preview_label.configure(image=preview_photo, text="")
+        self.template_preview_label.place(x=0, y=0, relwidth=1, relheight=1)
+        self._template_preview_photo = preview_photo
+
+    def render_template_preview_async(self, template_file, cache_file, request_id):
+        cache_file = os.path.abspath(cache_file)
+        if cache_file in self._template_preview_rendering or cache_file in self._template_preview_failed:
+            return
+
+        self._template_preview_rendering.add(cache_file)
+
+        def run():
+            error = None
+            try:
+                os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+                export_pptx_to_png(template_file, cache_file, long_edge_px=360)
+            except Exception as e:
+                error = e
+
+            def on_done():
+                self._template_preview_rendering.discard(cache_file)
+                selected_file = self.get_selected_template_file()
+                is_current = (
+                    request_id == self._template_preview_request_id
+                    and selected_file
+                    and os.path.abspath(selected_file) == os.path.abspath(template_file)
+                )
+
+                if error is not None:
+                    self._template_preview_failed.add(cache_file)
+                    self.report_exception(
+                        "template preview render",
+                        error,
+                        extra={"template_file": template_file, "cache_file": cache_file},
+                    )
+                    if is_current:
+                        self.log(f"[경고] 템플릿 프리뷰를 만들지 못했습니다: {os.path.basename(template_file)}")
+                    return
+
+                if is_current:
+                    self.show_template_preview(self.build_template_preview_image_from_file(cache_file))
+
+            self.after(0, on_done)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def update_template_preview(self, *_):
+        if not hasattr(self, "template_preview_label"):
+            return
+
+        self._template_preview_request_id += 1
+        request_id = self._template_preview_request_id
+
+        template_file = self.get_selected_template_file()
+        if not template_file:
+            self.hide_template_preview()
+            return
+
+        preview_image = self.build_template_preview_image(template_file)
+        if preview_image is not None:
+            self.show_template_preview(preview_image)
+            return
+
+        cache_file = self.get_template_preview_cache_file(template_file)
+        preview_image = self.build_template_preview_image_from_file(cache_file)
+        if preview_image is not None:
+            self.show_template_preview(preview_image)
+            return
+
+        self.hide_template_preview()
+        self.render_template_preview_async(template_file, cache_file, request_id)
 
     def get_selected_template_file(self):
         selected = self.template_files.get(self.template_var.get())
@@ -364,6 +687,7 @@ class LyricsApp(ctk.CTk):
             except Exception as e:
                 status_text = "!"
                 err = e
+                self.report_exception("template download", err)
                 self.after(0, lambda: self.log(f"[오류] 템플릿 다운로드에 실패했습니다: {err}"))
             finally:
                 self.after(0, lambda text=status_text: self.set_template_loading_state(False, text))
@@ -376,6 +700,34 @@ class LyricsApp(ctk.CTk):
             if candidate in available_fonts:
                 return candidate
         return "맑은 고딕"
+
+    def create_logo_label(self, parent):
+        logo_file = self.find_asset_file(LOGO_FILE_NAME)
+        if logo_file and Image is not None:
+            try:
+                logo_image = Image.open(logo_file).convert("RGBA")
+                max_width = LOGO_SIZE[0] * LOGO_DISPLAY_SCALE
+                max_height = LOGO_SIZE[1] * LOGO_DISPLAY_SCALE
+                scale = min(max_width / logo_image.width, max_height / logo_image.height, 1)
+                display_size = (
+                    max(1, int(logo_image.width * scale)),
+                    max(1, int(logo_image.height * scale)),
+                )
+                self._logo_image = ctk.CTkImage(
+                    light_image=logo_image,
+                    dark_image=logo_image,
+                    size=display_size,
+                )
+                return ctk.CTkLabel(parent, image=self._logo_image, text="")
+            except Exception:
+                pass
+
+        return ctk.CTkLabel(
+            parent,
+            text=APP_DISPLAY_NAME,
+            text_color=TITLE_FG,
+            font=(self.brand_font_family, 32, "bold"),
+        )
 
     def setup_style(self):
         ctk.set_appearance_mode("light")
@@ -398,97 +750,114 @@ class LyricsApp(ctk.CTk):
         content = ctk.CTkFrame(self, fg_color=APP_BG, bg_color=APP_BG, corner_radius=0, border_width=0)
         content.place(relx=0, rely=0, relwidth=1, relheight=1)
         content.columnconfigure(0, weight=1)
-        content.rowconfigure(2, weight=1)   # workspace row fills remaining space
+        content.rowconfigure(1, weight=1)   # workspace row fills remaining space
 
-        # --- Header ---
-        header = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=28, pady=(28, 0))
+        # --- Top bar ---
+        top_bar = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
+        top_bar.grid(row=0, column=0, sticky="ew", padx=44, pady=(22, 14))
+        top_bar.columnconfigure(0, weight=1)
 
+        brand_frame = ctk.CTkFrame(top_bar, fg_color="transparent", bg_color="transparent")
+        brand_frame.grid(row=0, column=0, sticky=tk.W)
+
+        self.create_logo_label(brand_frame).pack(anchor=tk.W)
         ctk.CTkLabel(
-            header,
-            text=APP_DISPLAY_NAME,
-            text_color=TITLE_FG,
-            font=(self.brand_font_family, 32, "bold"),
-        ).pack()
-        ctk.CTkLabel(
-            header,
+            brand_frame,
             text="레파토리와 가사를 정리해 파워포인트로 만듭니다.",
             text_color=MUTED_FG,
-            font=("Segoe UI", 12),
-        ).pack()
+            font=("Segoe UI", 11),
+        ).pack(anchor=tk.W, pady=(10, 0))
 
-        # --- Settings ---
-        settings_frame = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
-        settings_frame.grid(row=1, column=0, sticky="ew", padx=28, pady=(10, 0))
-        settings_frame.columnconfigure(3, weight=1)
-        settings_frame.columnconfigure(6, minsize=34)
+        settings_frame = ctk.CTkFrame(top_bar, fg_color="transparent", bg_color="transparent")
+        settings_frame.grid(row=0, column=1, sticky=tk.E)
+        settings_frame.columnconfigure(3, minsize=54)
+        settings_frame.columnconfigure(5, minsize=34)
+        settings_frame.columnconfigure(7, minsize=TEMPLATE_PREVIEW_WIDTH)
 
         ctk.CTkLabel(
             settings_frame,
             text="설정",
             text_color=TEXT_FG,
-            font=("Segoe UI", 13, "bold"),
-        ).grid(row=0, column=0, sticky=tk.W, padx=(18, 16), pady=14)
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=0, column=0, sticky=tk.NE, padx=(0, 18), pady=(8, 0))
 
         ctk.CTkLabel(
             settings_frame,
             text="슬라이드별 최대 줄 수",
             text_color=TEXT_FG,
             font=("Segoe UI", 12, "bold"),
-        ).grid(row=0, column=1, sticky=tk.W)
+        ).grid(row=0, column=1, sticky=tk.E, pady=4)
 
-        self.max_lines_var = tk.StringVar(value="4")
-        ctk.CTkComboBox(
+        self.max_lines_var = tk.StringVar(value=str(DEFAULT_MAX_LINES_PER_SLIDE))
+        ctk.CTkEntry(
             settings_frame,
-            values=[str(value) for value in range(1, 11)],
-            variable=self.max_lines_var,
+            textvariable=self.max_lines_var,
             width=72,
             height=34,
             corner_radius=12,
             border_width=1,
             border_color=PANEL_BORDER,
-            button_color=ACCENT,
-            button_hover_color=ACCENT_DARK,
             fg_color=TEXT_BG,
             bg_color="transparent",
             text_color=TEXT_FG,
+            justify=tk.CENTER,
             font=("Segoe UI", 12),
-            dropdown_font=("Segoe UI", 12),
-            dropdown_fg_color=TEXT_BG,
-            dropdown_text_color=TEXT_FG,
-            dropdown_hover_color=ACCENT_SOFT,
-        ).grid(row=0, column=2, sticky=tk.W, padx=(8, 18))
+        ).grid(row=0, column=2, sticky=tk.W, padx=(8, 0), pady=4)
+
+        ctk.CTkLabel(
+            settings_frame,
+            text="줄별 최대 글자 수",
+            text_color=TEXT_FG,
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=1, column=1, sticky=tk.E, pady=4)
+
+        self.max_chars_var = tk.StringVar(value=str(DEFAULT_MAX_CHARS_PER_LINE))
+        ctk.CTkEntry(
+            settings_frame,
+            textvariable=self.max_chars_var,
+            width=72,
+            height=34,
+            corner_radius=12,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            fg_color=TEXT_BG,
+            bg_color="transparent",
+            text_color=TEXT_FG,
+            justify=tk.CENTER,
+            font=("Segoe UI", 12),
+        ).grid(row=1, column=2, sticky=tk.W, padx=(8, 0), pady=4)
+
+        ctk.CTkLabel(
+            settings_frame,
+            text="가사 크기",
+            text_color=TEXT_FG,
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=2, column=1, sticky=tk.E, pady=4)
+
+        self.lyrics_font_size_var = tk.StringVar(value=DEFAULT_LYRICS_FONT_SIZE or "기본")
+        ctk.CTkEntry(
+            settings_frame,
+            textvariable=self.lyrics_font_size_var,
+            width=72,
+            height=34,
+            corner_radius=12,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            fg_color=TEXT_BG,
+            bg_color="transparent",
+            text_color=TEXT_FG,
+            justify=tk.CENTER,
+            font=("Segoe UI", 12),
+        ).grid(row=2, column=2, sticky=tk.W, padx=(8, 0), pady=4)
 
         ctk.CTkLabel(
             settings_frame,
             text="템플릿",
             text_color=TEXT_FG,
             font=("Segoe UI", 12, "bold"),
-        ).grid(row=0, column=4, sticky=tk.E)
+        ).grid(row=0, column=4, sticky=tk.E, pady=4)
 
         self.template_var = tk.StringVar(value="")
-        self.template_combo = ctk.CTkComboBox(
-            settings_frame,
-            values=["템플릿 확인 중"],
-            variable=self.template_var,
-            width=190,
-            height=34,
-            corner_radius=12,
-            border_width=1,
-            border_color=PANEL_BORDER,
-            button_color=ACCENT,
-            button_hover_color=ACCENT_DARK,
-            fg_color=TEXT_BG,
-            bg_color="transparent",
-            text_color=TEXT_FG,
-            font=("맑은 고딕", 11),
-            dropdown_font=("맑은 고딕", 11),
-            dropdown_fg_color=TEXT_BG,
-            dropdown_text_color=TEXT_FG,
-            dropdown_hover_color=ACCENT_SOFT,
-        )
-        self.template_combo.grid(row=0, column=5, sticky=tk.E, padx=(8, 6))
-
         self.template_refresh_slot = ctk.CTkFrame(
             settings_frame,
             width=34,
@@ -496,7 +865,7 @@ class LyricsApp(ctk.CTk):
             fg_color="transparent",
             bg_color="transparent",
         )
-        self.template_refresh_slot.grid(row=0, column=6, sticky=tk.W, padx=(0, 18))
+        self.template_refresh_slot.grid(row=0, column=5, sticky=tk.E, padx=(8, 6), pady=4)
         self.template_refresh_slot.grid_propagate(False)
 
         self.template_refresh_btn = ctk.CTkButton(
@@ -519,12 +888,54 @@ class LyricsApp(ctk.CTk):
         self.template_refresh_slot.bind("<Leave>", self.on_template_refresh_leave)
         self.template_refresh_btn.place(x=0, y=0, relwidth=1, relheight=1)
 
+        self.template_combo = ctk.CTkComboBox(
+            settings_frame,
+            values=["템플릿 확인 중"],
+            variable=self.template_var,
+            command=self.update_template_preview,
+            width=190,
+            height=34,
+            corner_radius=12,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            button_color=ACCENT,
+            button_hover_color=ACCENT_DARK,
+            fg_color=TEXT_BG,
+            bg_color="transparent",
+            text_color=TEXT_FG,
+            font=("맑은 고딕", 11),
+            dropdown_font=("맑은 고딕", 11),
+            dropdown_fg_color=TEXT_BG,
+            dropdown_text_color=TEXT_FG,
+            dropdown_hover_color=ACCENT_SOFT,
+        )
+        self.template_combo.grid(row=0, column=6, sticky=tk.E, padx=(0, 6), pady=4)
+
+        self.template_preview_slot = ctk.CTkFrame(
+            settings_frame,
+            width=TEMPLATE_PREVIEW_WIDTH,
+            height=TEMPLATE_PREVIEW_HEIGHT,
+            fg_color="transparent",
+            bg_color="transparent",
+        )
+        self.template_preview_slot.grid(row=0, column=7, sticky=tk.W, padx=(0, 0), pady=4)
+        self.template_preview_slot.grid_propagate(False)
+
+        self._template_preview_photo = None
+        self.template_preview_label = tk.Label(
+            self.template_preview_slot,
+            text="",
+            bd=0,
+            highlightthickness=0,
+            bg=APP_BG,
+        )
+
         ctk.CTkLabel(
             settings_frame,
             text="PPT 서버",
             text_color=TEXT_FG,
             font=("Segoe UI", 12, "bold"),
-        ).grid(row=0, column=7, sticky=tk.E)
+        ).grid(row=1, column=4, sticky=tk.E, pady=4)
 
         self.server_url_var = tk.StringVar(value=DEFAULT_SERVER_URL)
         ctk.CTkEntry(
@@ -540,11 +951,11 @@ class LyricsApp(ctk.CTk):
             bg_color="transparent",
             text_color=TEXT_FG,
             font=("Segoe UI", 11),
-        ).grid(row=0, column=8, sticky=tk.E, padx=(8, 18))
+        ).grid(row=1, column=6, sticky=tk.E, padx=(4, 6), pady=4)
 
         # --- Workspace ---
         workspace_frame = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
-        workspace_frame.grid(row=2, column=0, sticky="nsew", padx=28, pady=(8, 8))
+        workspace_frame.grid(row=1, column=0, sticky="nsew", padx=28, pady=(0, 8))
         workspace_frame.columnconfigure(0, weight=4)
         workspace_frame.columnconfigure(1, weight=5)
         workspace_frame.rowconfigure(0, weight=1)
@@ -642,7 +1053,7 @@ class LyricsApp(ctk.CTk):
             border_width=1,
             border_color=PANEL_BORDER,
         )
-        action_frame.grid(row=3, column=0, sticky="ew", padx=28, pady=(0, 6))
+        action_frame.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 6))
 
         self.refresh_btn = ctk.CTkButton(
             action_frame,
@@ -687,7 +1098,7 @@ class LyricsApp(ctk.CTk):
             border_width=1,
             border_color=PANEL_BORDER,
         )
-        log_frame.grid(row=4, column=0, sticky="ew", padx=28, pady=(6, 24))
+        log_frame.grid(row=3, column=0, sticky="ew", padx=28, pady=(6, 24))
         log_frame.columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
@@ -808,11 +1219,32 @@ class LyricsApp(ctk.CTk):
                 self.background_canvas.create_line(0, y, width, y, fill=color, tags=("background",))
 
     def log(self, message):
+        if hasattr(self, "_recent_log_lines"):
+            self._recent_log_lines.append(str(message))
+            self._recent_log_lines = self._recent_log_lines[-30:]
         self.log_area.configure(state="normal")
         self.log_area.insert("end", message + "\n")
         self.log_area.see("end")
         self.log_area.configure(state="disabled")
         self.update_idletasks()
+
+    def show_busy_dialog(self, title, message, on_cancel=None):
+        self.hide_busy_dialog()
+        self._busy_dialog = BusyDialog(self, title, message, on_cancel=on_cancel)
+        self._busy_dialog.lift()
+
+    def update_busy_dialog(self, message):
+        if self._busy_dialog is not None:
+            self._busy_dialog.set_message(message)
+
+    def hide_busy_dialog(self):
+        if self._busy_dialog is None:
+            return
+        try:
+            self._busy_dialog.close()
+        except tk.TclError:
+            pass
+        self._busy_dialog = None
 
     def get_manual_lyrics(self, song_title):
         dialog = MultilineDialog(self, "가사 직접 입력", f"'{song_title}' 가사를 입력하세요.")
@@ -825,6 +1257,42 @@ class LyricsApp(ctk.CTk):
 
     def get_server_url(self):
         return self.server_url_var.get().strip() or DEFAULT_SERVER_URL
+
+    def get_max_lines_per_slide(self):
+        try:
+            return int(self.max_lines_var.get())
+        except (TypeError, ValueError):
+            return DEFAULT_MAX_LINES_PER_SLIDE
+
+    def get_max_chars_per_line(self):
+        try:
+            return int(self.max_chars_var.get())
+        except (TypeError, ValueError):
+            return DEFAULT_MAX_CHARS_PER_LINE
+
+    def get_lyrics_font_size(self):
+        value = self.lyrics_font_size_var.get().strip()
+        if not value or value == "기본":
+            return None
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def open_output_file(self, file_path):
+        try:
+            if sys.platform == "win32":
+                os.startfile(os.path.abspath(file_path))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", file_path])
+            else:
+                subprocess.Popen(["xdg-open", file_path])
+            return True
+        except Exception as e:
+            self.report_exception("open output file", e, extra={"file_path": file_path})
+            self.log(f"[오류] 생성된 파일을 열지 못했습니다: {e}")
+            return False
 
     def get_sequence_entries(self):
         if self.sequence_placeholder_visible:
@@ -1030,30 +1498,65 @@ class LyricsApp(ctk.CTk):
         song_titles = [title for title, _ in self.sequence_entries]
         template_file = self.find_asset_file(SONGLIST_TEMPLATE_FILE_NAME)
         if not template_file:
+            err = FileNotFoundError(f"assets/{SONGLIST_TEMPLATE_FILE_NAME}")
+            self.report_exception("songlist template missing", err)
             self.log(f"[오류] 송리스트 카드 템플릿을 찾을 수 없습니다: 'assets/{SONGLIST_TEMPLATE_FILE_NAME}'")
             messagebox.showerror("오류", f"템플릿 파일을 찾을 수 없습니다:\nassets/{SONGLIST_TEMPLATE_FILE_NAME}")
             return
 
         output_file = os.path.join(self.get_output_dir(), SONGLIST_OUTPUT_FILE_NAME)
+        output_dir = os.path.dirname(os.path.abspath(output_file))
+        fd, temp_output_file = tempfile.mkstemp(
+            prefix=".songlist_",
+            suffix=".png",
+            dir=output_dir,
+        )
+        os.close(fd)
+        try:
+            os.remove(temp_output_file)
+        except OSError:
+            pass
+
+        cancel_event = threading.Event()
+
+        def raise_if_cancelled():
+            if cancel_event.is_set():
+                raise OperationCancelled()
+
+        def request_cancel():
+            if cancel_event.is_set():
+                return
+            cancel_event.set()
+            self.log("[취소] 송리스트 카드 생성 취소를 요청했습니다.")
+            self.update_busy_dialog("취소 요청을 처리하고 있습니다.")
 
         self.set_action_buttons_state("disabled")
         self.set_editor_state("disabled")
         self.log("====================================")
         self.log("송리스트 카드를 생성합니다.")
+        self.show_busy_dialog(
+            "송리스트 생성 중",
+            "송리스트 카드를 생성하고 있습니다.",
+            on_cancel=request_cancel,
+        )
 
         def run():
             try:
                 source = "서버"
                 server_url = self.get_server_url()
+                raise_if_cancelled()
                 self.after(0, lambda: self.log(f"[정보][송리스트][서버요청] endpoint=/songlist-card, 서버={server_url}"))
+                self.after(0, lambda: self.update_busy_dialog("서버에 송리스트 생성을 요청하고 있습니다."))
                 try:
                     week_num = generate_songlist_card_via_server(
                         server_url,
                         template_file,
                         song_titles,
-                        output_file,
+                        temp_output_file,
                     )
+                    raise_if_cancelled()
                 except PptServerUnavailable as e:
+                    raise_if_cancelled()
                     source = "로컬"
                     self.after(
                         0,
@@ -1062,9 +1565,17 @@ class LyricsApp(ctk.CTk):
                         ),
                     )
                     self.after(0, lambda: self.log("[정보][송리스트][로컬변환] 로컬 변환을 시작합니다."))
-                    week_num = build_songlist_card_png(template_file, song_titles, output_file)
+                    self.after(0, lambda: self.update_busy_dialog("서버 연결이 되지 않아 로컬에서 변환하고 있습니다."))
+                    week_num = build_songlist_card_png(template_file, song_titles, temp_output_file)
+                    raise_if_cancelled()
                 except PptServerResponseError as e:
+                    raise_if_cancelled()
                     if e.status_code and e.status_code >= 500:
+                        self.report_exception(
+                            "songlist server processing fallback",
+                            e,
+                            extra={"status_code": e.status_code},
+                        )
                         source = "로컬"
                         self.after(
                             0,
@@ -1073,23 +1584,44 @@ class LyricsApp(ctk.CTk):
                             ),
                         )
                         self.after(0, lambda: self.log("[정보][송리스트][로컬변환] 로컬 변환을 시작합니다."))
-                        week_num = build_songlist_card_png(template_file, song_titles, output_file)
+                        self.after(0, lambda: self.update_busy_dialog("서버 처리 오류로 로컬에서 변환하고 있습니다."))
+                        week_num = build_songlist_card_png(template_file, song_titles, temp_output_file)
+                        raise_if_cancelled()
                     else:
                         raise
 
+                os.replace(temp_output_file, output_file)
+
                 def on_done():
+                    if cancel_event.is_set():
+                        return
+                    self.hide_busy_dialog()
                     week_text = f" (Week {week_num})" if week_num else ""
                     self.log(f"[완료] 송리스트 카드를 만들었습니다: '{output_file}' [{source}]{week_text}")
+                    opened = self.open_output_file(output_file)
+                    open_message = "\n생성된 파일을 엽니다." if opened else "\n생성된 파일 자동 열기에 실패했습니다."
                     messagebox.showinfo(
                         "완료",
-                        f"송리스트 카드를 생성했습니다.\n저장 위치: out/{SONGLIST_OUTPUT_FILE_NAME}",
+                        f"송리스트 카드를 생성했습니다.\n저장 위치: out/{SONGLIST_OUTPUT_FILE_NAME}"
+                        + open_message,
                     )
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")
                 self.after(0, on_done)
+            except OperationCancelled:
+                def on_cancelled():
+                    self.hide_busy_dialog()
+                    self.log("[취소] 송리스트 카드 생성을 중단했습니다.")
+                    self.set_editor_state("normal")
+                    self.set_action_buttons_state("normal")
+                self.after(0, on_cancelled)
             except PptServerResponseError as e:
                 err = e
                 def on_server_error():
+                    if cancel_event.is_set():
+                        return
+                    self.report_exception("songlist server request", err, extra={"status_code": err.status_code})
+                    self.hide_busy_dialog()
                     status_text = f" status={err.status_code}" if err.status_code else ""
                     self.log(f"[오류][송리스트][서버요청실패]{status_text}: {err}")
                     messagebox.showerror("오류", f"송리스트 카드 생성 요청이 거부되었습니다:\n{err}")
@@ -1099,6 +1631,10 @@ class LyricsApp(ctk.CTk):
             except LocalOfficeUnavailable as e:
                 err = e
                 def on_local_error():
+                    if cancel_event.is_set():
+                        return
+                    self.report_exception("songlist local office", err)
+                    self.hide_busy_dialog()
                     self.log(f"[오류][송리스트][로컬오피스실패]: {err}")
                     messagebox.showerror("오류", f"송리스트 카드 생성에 실패했습니다:\n{err}")
                     self.set_editor_state("normal")
@@ -1107,11 +1643,21 @@ class LyricsApp(ctk.CTk):
             except Exception as e:
                 err = e
                 def on_error():
+                    if cancel_event.is_set():
+                        return
+                    self.report_exception("songlist unknown", err)
+                    self.hide_busy_dialog()
                     self.log(f"[오류][송리스트][알수없음] 송리스트 카드 생성에 실패했습니다: {err}")
                     messagebox.showerror("오류", f"송리스트 카드 생성에 실패했습니다:\n{err}")
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")
                 self.after(0, on_error)
+            finally:
+                try:
+                    if os.path.exists(temp_output_file):
+                        os.remove(temp_output_file)
+                except OSError:
+                    pass
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -1119,6 +1665,7 @@ class LyricsApp(ctk.CTk):
         try:
             from auto_lyrics_downloader import download_missing_lyrics
         except Exception as e:
+            self.report_exception("lyrics downloader import", e, extra={"auto": auto})
             self.log(f"[오류] 가사 다운로드 모듈을 불러오지 못했습니다: {e}")
             if not auto:
                 messagebox.showerror("오류", f"가사 다운로드 모듈을 불러오지 못했습니다:\n{e}")
@@ -1151,6 +1698,7 @@ class LyricsApp(ctk.CTk):
             except Exception as e:
                 err = e
                 def on_error():
+                    self.report_exception("lyrics download", err, extra={"auto": auto})
                     self.log(f"[오류] 가사 다운로드에 실패했습니다: {err}")
                     if not auto:
                         messagebox.showerror("오류", f"가사 다운로드에 실패했습니다:\n{err}")
@@ -1169,14 +1717,15 @@ class LyricsApp(ctk.CTk):
 
         sequence_entries = self.sequence_entries
 
-        try:
-            max_lines_per_slide = int(self.max_lines_var.get())
-        except (TypeError, ValueError):
-            max_lines_per_slide = 4
+        max_lines_per_slide = self.get_max_lines_per_slide()
+        max_chars_per_line = self.get_max_chars_per_line()
+        lyrics_font_size = self.get_lyrics_font_size()
 
         template_file = self.get_selected_template_file()
         if not template_file:
             template_dir = os.path.join(ASSETS_DIR_NAME, TEMPLATE_DIR_NAME)
+            err = FileNotFoundError(template_dir)
+            self.report_exception("ppt template missing", err)
             self.log(f"[오류] 템플릿 파일을 찾을 수 없습니다: '{template_dir}'")
             messagebox.showerror("오류", f"템플릿 파일을 찾을 수 없습니다:\n{template_dir}")
             return
@@ -1210,11 +1759,13 @@ class LyricsApp(ctk.CTk):
 
         self.set_action_buttons_state("disabled")
         self.set_editor_state("disabled")
+        self.show_busy_dialog("파워포인트 생성 중", "파워포인트 파일을 생성하고 있습니다.")
 
         def run():
             try:
                 source = "서버"
                 self.after(0, lambda: self.log(f"[정보][PPT][서버요청] endpoint=/generate-ppt, 서버={server_url}"))
+                self.after(0, lambda: self.update_busy_dialog("서버에 파워포인트 생성을 요청하고 있습니다."))
                 try:
                     generated_count = generate_pptx_via_server(
                         server_url,
@@ -1223,6 +1774,8 @@ class LyricsApp(ctk.CTk):
                         lyrics_by_title,
                         max_lines_per_slide,
                         output_file,
+                        max_chars_per_line=max_chars_per_line,
+                        lyrics_font_size=lyrics_font_size,
                     )
                     if generated_count is None:
                         generated_count = ready_count
@@ -1235,17 +1788,25 @@ class LyricsApp(ctk.CTk):
                         ),
                     )
                     self.after(0, lambda: self.log("[정보][PPT][로컬생성] 로컬 PPT 생성을 시작합니다."))
+                    self.after(0, lambda: self.update_busy_dialog("서버 연결이 되지 않아 로컬에서 생성하고 있습니다."))
                     result = build_integrated_pptx_with_local_office(
                         template_file,
                         sequence_entries,
                         lyrics_by_title,
                         output_file,
                         max_lines_per_slide,
+                        max_chars_per_line=max_chars_per_line,
+                        lyrics_font_size=lyrics_font_size,
                     )
                     generated_count = result["appended_count"]
                     source = f"로컬 {result.get('method', 'Office')}"
                 except PptServerResponseError as e:
                     if e.status_code and e.status_code >= 500:
+                        self.report_exception(
+                            "ppt server processing fallback",
+                            e,
+                            extra={"status_code": e.status_code},
+                        )
                         source = "로컬"
                         self.after(
                             0,
@@ -1254,12 +1815,15 @@ class LyricsApp(ctk.CTk):
                             ),
                         )
                         self.after(0, lambda: self.log("[정보][PPT][로컬생성] 로컬 PPT 생성을 시작합니다."))
+                        self.after(0, lambda: self.update_busy_dialog("서버 처리 오류로 로컬에서 생성하고 있습니다."))
                         result = build_integrated_pptx_with_local_office(
                             template_file,
                             sequence_entries,
                             lyrics_by_title,
                             output_file,
                             max_lines_per_slide,
+                            max_chars_per_line=max_chars_per_line,
+                            lyrics_font_size=lyrics_font_size,
                         )
                         generated_count = result["appended_count"]
                         source = f"로컬 {result.get('method', 'Office')}"
@@ -1267,14 +1831,23 @@ class LyricsApp(ctk.CTk):
                         raise
 
                 def on_done():
+                    self.hide_busy_dialog()
                     self.log(f"\n[완료] 파워포인트 파일을 만들었습니다: '{output_file}' [{source}, {generated_count}곡]\n")
-                    messagebox.showinfo("완료", "파워포인트 파일을 생성했습니다.\n저장 위치: out/integrated_lyrics.pptx")
+                    opened = self.open_output_file(output_file)
+                    open_message = "\n생성된 파일을 엽니다." if opened else "\n생성된 파일 자동 열기에 실패했습니다."
+                    messagebox.showinfo(
+                        "완료",
+                        "파워포인트 파일을 생성했습니다.\n저장 위치: out/integrated_lyrics.pptx"
+                        + open_message,
+                    )
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")
                 self.after(0, on_done)
             except PptServerResponseError as e:
                 err = e
                 def on_server_error():
+                    self.report_exception("ppt server request", err, extra={"status_code": err.status_code})
+                    self.hide_busy_dialog()
                     status_text = f" status={err.status_code}" if err.status_code else ""
                     self.log(f"[오류][PPT][서버요청실패]{status_text}: {err}")
                     messagebox.showerror("오류", f"PPT 서버 요청이 거부되었습니다:\n{err}")
@@ -1284,6 +1857,8 @@ class LyricsApp(ctk.CTk):
             except LocalOfficeUnavailable as e:
                 err = e
                 def on_local_office_error():
+                    self.report_exception("ppt local office", err)
+                    self.hide_busy_dialog()
                     self.log(f"[오류][PPT][로컬오피스실패]: {err}")
                     messagebox.showerror("오류", str(err))
                     self.set_editor_state("normal")
@@ -1292,6 +1867,8 @@ class LyricsApp(ctk.CTk):
             except Exception as e:
                 err = e
                 def on_error():
+                    self.report_exception("ppt unknown", err)
+                    self.hide_busy_dialog()
                     self.log(f"[오류][PPT][알수없음] 파워포인트 생성에 실패했습니다: {err}")
                     messagebox.showerror("오류", f"파워포인트 파일을 생성하지 못했습니다:\n{err}")
                     self.set_editor_state("normal")

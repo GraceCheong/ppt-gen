@@ -13,10 +13,10 @@ VERSION_RE = re.compile(r"^v1\.0\.(\d+)$")
 SPEC_FILE_NAME = "LyricsToPPT.spec"
 
 ASSET_FILES = (
-    "assets/templates/template 2.pptx",
-    "assets/songlist.pptx",
     "assets/sequences_sample.txt",
+    "assets/atempo.ico",
     "assets/atempo.png",
+    "assets/logo.png",
     "assets/background.png",
     "README.md",
     "requirements.txt",
@@ -24,11 +24,11 @@ ASSET_FILES = (
 
 if sys.platform == "win32":
     PLATFORM_LABEL = "Windows"
-    ARTIFACT_SUBPATH = "dist/LyricsToPPT.exe"
+    ARTIFACT_SUBPATH = "dist/PORR_atempo.exe"
     IS_APP_BUNDLE = False
 elif sys.platform == "darwin":
     PLATFORM_LABEL = "macOS"
-    ARTIFACT_SUBPATH = "dist/LyricsToPPT.app"
+    ARTIFACT_SUBPATH = "dist/PORR_atempo.app"
     IS_APP_BUNDLE = True
 else:
     raise SystemExit(f"Unsupported platform: {sys.platform}")
@@ -132,6 +132,7 @@ def parse_args() -> argparse.Namespace:
         description=f"Build and package LyricsToPPT for {PLATFORM_LABEL}."
     )
     parser.add_argument("--force", action="store_true", help="Overwrite existing zip.")
+    parser.add_argument("--version", help="Override release version (e.g. v1.0.3).")
     return parser.parse_args()
 
 
@@ -139,10 +140,14 @@ def main() -> int:
     args = parse_args()
     root = project_root()
 
+    if args.version and not VERSION_RE.match(args.version):
+        print(f"Invalid version format: {args.version!r}. Expected v1.0.X", file=sys.stderr)
+        return 1
+
     try:
         artifact = build_artifact(root)
         asset_files = collect_asset_files(root)
-        version = next_release_version(root / RELEASE_DIR_NAME)
+        version = args.version or next_release_version(root / RELEASE_DIR_NAME)
         zip_path = create_release_zip(version, artifact, asset_files, args.force)
     except Exception as exc:
         print(f"Release build failed: {exc}", file=sys.stderr)

@@ -9,6 +9,7 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Pt
 from ppt_builder import set_editable_text
+from powerpoint_com import create_powerpoint_application, open_presentation_hidden
 
 # 52 natural text colors, one per ISO week of the year.
 # Ordered to follow a seasonal progression (winter → spring → summer → autumn → winter).
@@ -144,7 +145,7 @@ def _export_via_libreoffice(pptx_path, png_path):
     return os.path.exists(png_abs)
 
 
-def _export_via_com(pptx_path, png_path):
+def _export_via_com(pptx_path, png_path, long_edge_px=None):
     import comtypes
     import comtypes.client
 
@@ -152,15 +153,15 @@ def _export_via_com(pptx_path, png_path):
     png_abs = os.path.abspath(png_path)
     last_error = None
 
-    for long_edge_px in (2000, 1600, 1280):
-        width_px, height_px = _slide_px(pptx_path, long_edge_px=long_edge_px)
+    long_edges = (long_edge_px,) if long_edge_px else (2000, 1600, 1280)
+    for export_long_edge_px in long_edges:
+        width_px, height_px = _slide_px(pptx_path, long_edge_px=export_long_edge_px)
 
         comtypes.CoInitialize()
         try:
-            powerpoint = comtypes.client.CreateObject("PowerPoint.Application")
-            powerpoint.Visible = 1
+            powerpoint = create_powerpoint_application(comtypes.client)
             try:
-                prs_com = powerpoint.Presentations.Open(pptx_abs, ReadOnly=-1, WithWindow=0)
+                prs_com = open_presentation_hidden(powerpoint, pptx_abs)
                 try:
                     prs_com.Slides(1).Export(png_abs, "PNG", width_px, height_px)
                     if os.path.exists(png_abs):
@@ -195,7 +196,7 @@ def _export_via_server(pptx_path, png_path, server_url):
         f.write(response.content)
 
 
-def export_pptx_to_png(pptx_path, png_path, server_url=None):
+def export_pptx_to_png(pptx_path, png_path, server_url=None, long_edge_px=None):
     """Export the first slide to PNG.
 
     Priority:
@@ -214,7 +215,7 @@ def export_pptx_to_png(pptx_path, png_path, server_url=None):
 
     if sys.platform == "win32":
         try:
-            _export_via_com(pptx_path, png_path)
+            _export_via_com(pptx_path, png_path, long_edge_px=long_edge_px)
             return
         except Exception as e:
             errors.append(f"로컬 PowerPoint 변환 실패: {e}")

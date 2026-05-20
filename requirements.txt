@@ -1,5 +1,5 @@
 beautifulsoup4
-comtypes
+comtypes; sys_platform == "win32"
 customtkinter
 gdown
 pillow

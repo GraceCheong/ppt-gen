@@ -5,9 +5,14 @@ import requests
 
 
 PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+PPT_GENERATOR_VERSION = "direct-python-pptx-v4"
 
 
 class PptServerUnavailable(RuntimeError):
+    pass
+
+
+class PptServerEndpointUnavailable(PptServerUnavailable):
     pass
 
 
@@ -48,7 +53,7 @@ def _post_template(server_url, endpoint, template_path, payload, timeout=20):
         raise PptServerUnavailable(f"endpoint={endpoint}, 네트워크 오류: {exc}") from exc
 
     if response.status_code in (404, 405):
-        raise PptServerUnavailable(
+        raise PptServerEndpointUnavailable(
             f"endpoint={endpoint}, 서버 오류 {response.status_code}: {_response_detail(response)}"
         )
     if response.status_code >= 500:
@@ -72,6 +77,8 @@ def generate_pptx_via_server(
     lyrics_by_title,
     max_lines_per_slide,
     output_pptx_path,
+    max_chars_per_line=18,
+    lyrics_font_size=None,
 ):
     payload = {
         "sequence_entries": [
@@ -80,8 +87,16 @@ def generate_pptx_via_server(
         ],
         "lyrics_by_title": lyrics_by_title,
         "max_lines_per_slide": max_lines_per_slide,
+        "max_chars_per_line": max_chars_per_line,
+        "lyrics_font_size": lyrics_font_size,
     }
     response = _post_template(server_url, "/generate-ppt", template_path, payload)
+    generator = response.headers.get("X-PORR-Generator", "")
+    if generator != PPT_GENERATOR_VERSION:
+        raise PptServerUnavailable(
+            "endpoint=/generate-ppt, 서버 생성기가 최신 버전이 아닙니다. "
+            f"generator={generator or 'missing'}"
+        )
 
     output_dir = os.path.dirname(os.path.abspath(output_pptx_path))
     if output_dir:
@@ -115,10 +130,10 @@ def generate_songlist_card_via_server(
                 endpoint,
                 template_path,
                 {"song_titles": song_titles},
-                timeout=40,
+                timeout=90,
             )
             break
-        except PptServerUnavailable as exc:
+        except PptServerEndpointUnavailable as exc:
             last_error = exc
 
     if response is None:
