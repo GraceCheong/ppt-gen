@@ -1,0 +1,7 @@
+beautifulsoup4
+comtypes
+customtkinter
+pillow
+pyinstaller
+python-pptx
+requests

@@ -4,6 +4,7 @@
 
 # Local repertoire and lyrics files
 *.txt
+!*requirements.txt
 !assets/sequences_sample.txt
 
 # Build outputs
