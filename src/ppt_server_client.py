@@ -12,7 +12,9 @@ class PptServerUnavailable(RuntimeError):
 
 
 class PptServerResponseError(RuntimeError):
-    pass
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _response_detail(response):
@@ -43,15 +45,21 @@ def _post_template(server_url, endpoint, template_path, payload, timeout=20):
                 timeout=(2, timeout),
             )
     except requests.RequestException as exc:
-        raise PptServerUnavailable(str(exc)) from exc
+        raise PptServerUnavailable(f"endpoint={endpoint}, 네트워크 오류: {exc}") from exc
 
-    if response.status_code in (404, 405) or response.status_code >= 500:
+    if response.status_code in (404, 405):
         raise PptServerUnavailable(
-            f"서버 오류 {response.status_code}: {_response_detail(response)}"
+            f"endpoint={endpoint}, 서버 오류 {response.status_code}: {_response_detail(response)}"
+        )
+    if response.status_code >= 500:
+        raise PptServerResponseError(
+            f"endpoint={endpoint}, 서버 처리 오류 {response.status_code}: {_response_detail(response)}",
+            status_code=response.status_code,
         )
     if response.status_code >= 400:
         raise PptServerResponseError(
-            f"서버 요청 오류 {response.status_code}: {_response_detail(response)}"
+            f"endpoint={endpoint}, 서버 요청 오류 {response.status_code}: {_response_detail(response)}",
+            status_code=response.status_code,
         )
 
     return response
@@ -92,13 +100,29 @@ def generate_songlist_card_via_server(
     song_titles,
     output_png_path,
 ):
-    response = _post_template(
-        server_url,
+    response = None
+    last_error = None
+    # Older deployed servers may expose a different songlist endpoint.
+    for endpoint in (
         "/songlist-card",
-        template_path,
-        {"song_titles": song_titles},
-        timeout=40,
-    )
+        "/songlist",
+        "/songlist_card",
+        "/generate-songlist-card",
+    ):
+        try:
+            response = _post_template(
+                server_url,
+                endpoint,
+                template_path,
+                {"song_titles": song_titles},
+                timeout=40,
+            )
+            break
+        except PptServerUnavailable as exc:
+            last_error = exc
+
+    if response is None:
+        raise last_error or PptServerUnavailable("송리스트 카드 요청에 실패했습니다.")
 
     output_dir = os.path.dirname(os.path.abspath(output_png_path))
     if output_dir:

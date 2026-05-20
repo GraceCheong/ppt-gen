@@ -169,4 +169,10 @@ def build_songlist_card_png(template_path, song_titles, output_png_path):
     output_dir = os.path.dirname(os.path.abspath(output_png_path))
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-    return build_songlist_card(template_path, song_titles, output_png_path)
+    try:
+        return build_songlist_card(template_path, song_titles, output_png_path)
+    except Exception as e:
+        raise LocalOfficeUnavailable(
+            "로컬에서 송리스트 카드 PNG를 생성할 수 없습니다.\n"
+            f"- 원인: {e}"
+        ) from e

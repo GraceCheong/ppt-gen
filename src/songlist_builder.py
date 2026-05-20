@@ -148,24 +148,35 @@ def _export_via_com(pptx_path, png_path):
     import comtypes
     import comtypes.client
 
-    width_px, height_px = _slide_px(pptx_path)
     pptx_abs = os.path.abspath(pptx_path)
     png_abs = os.path.abspath(png_path)
+    last_error = None
 
-    comtypes.CoInitialize()
-    try:
-        powerpoint = comtypes.client.CreateObject("PowerPoint.Application")
-        powerpoint.Visible = 1
+    for long_edge_px in (2000, 1600, 1280):
+        width_px, height_px = _slide_px(pptx_path, long_edge_px=long_edge_px)
+
+        comtypes.CoInitialize()
         try:
-            prs_com = powerpoint.Presentations.Open(pptx_abs, ReadOnly=-1, WithWindow=0)
+            powerpoint = comtypes.client.CreateObject("PowerPoint.Application")
+            powerpoint.Visible = 1
             try:
-                prs_com.Slides(1).Export(png_abs, "PNG", width_px, height_px)
+                prs_com = powerpoint.Presentations.Open(pptx_abs, ReadOnly=-1, WithWindow=0)
+                try:
+                    prs_com.Slides(1).Export(png_abs, "PNG", width_px, height_px)
+                    if os.path.exists(png_abs):
+                        return
+                finally:
+                    prs_com.Close()
             finally:
-                prs_com.Close()
+                powerpoint.Quit()
+        except Exception as e:
+            last_error = e
         finally:
-            powerpoint.Quit()
-    finally:
-        comtypes.CoUninitialize()
+            comtypes.CoUninitialize()
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("PowerPoint COM PNG 변환에 실패했습니다.")
 
 
 def _export_via_server(pptx_path, png_path, server_url):

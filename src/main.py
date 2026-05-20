@@ -1045,6 +1045,7 @@ class LyricsApp(ctk.CTk):
             try:
                 source = "서버"
                 server_url = self.get_server_url()
+                self.after(0, lambda: self.log(f"[정보][송리스트][서버요청] endpoint=/songlist-card, 서버={server_url}"))
                 try:
                     week_num = generate_songlist_card_via_server(
                         server_url,
@@ -1057,10 +1058,24 @@ class LyricsApp(ctk.CTk):
                     self.after(
                         0,
                         lambda err=e: self.log(
-                            f"[안내] PPT 서버가 응답하지 않아 로컬 PowerPoint COM으로 전환합니다. PowerPoint가 없으면 LibreOffice를 사용합니다: {err}"
+                            f"[경고][송리스트][서버연결불가] 로컬 PowerPoint COM으로 전환합니다. PowerPoint가 없으면 LibreOffice를 사용합니다: {err}"
                         ),
                     )
+                    self.after(0, lambda: self.log("[정보][송리스트][로컬변환] 로컬 변환을 시작합니다."))
                     week_num = build_songlist_card_png(template_file, song_titles, output_file)
+                except PptServerResponseError as e:
+                    if e.status_code and e.status_code >= 500:
+                        source = "로컬"
+                        self.after(
+                            0,
+                            lambda err=e: self.log(
+                                f"[경고][송리스트][서버처리오류] 로컬 PowerPoint COM으로 전환합니다. PowerPoint가 없으면 LibreOffice를 사용합니다: {err}"
+                            ),
+                        )
+                        self.after(0, lambda: self.log("[정보][송리스트][로컬변환] 로컬 변환을 시작합니다."))
+                        week_num = build_songlist_card_png(template_file, song_titles, output_file)
+                    else:
+                        raise
 
                 def on_done():
                     week_text = f" (Week {week_num})" if week_num else ""
@@ -1072,10 +1087,27 @@ class LyricsApp(ctk.CTk):
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")
                 self.after(0, on_done)
+            except PptServerResponseError as e:
+                err = e
+                def on_server_error():
+                    status_text = f" status={err.status_code}" if err.status_code else ""
+                    self.log(f"[오류][송리스트][서버요청실패]{status_text}: {err}")
+                    messagebox.showerror("오류", f"송리스트 카드 생성 요청이 거부되었습니다:\n{err}")
+                    self.set_editor_state("normal")
+                    self.set_action_buttons_state("normal")
+                self.after(0, on_server_error)
+            except LocalOfficeUnavailable as e:
+                err = e
+                def on_local_error():
+                    self.log(f"[오류][송리스트][로컬오피스실패]: {err}")
+                    messagebox.showerror("오류", f"송리스트 카드 생성에 실패했습니다:\n{err}")
+                    self.set_editor_state("normal")
+                    self.set_action_buttons_state("normal")
+                self.after(0, on_local_error)
             except Exception as e:
                 err = e
                 def on_error():
-                    self.log(f"[오류] 송리스트 카드 생성에 실패했습니다: {err}")
+                    self.log(f"[오류][송리스트][알수없음] 송리스트 카드 생성에 실패했습니다: {err}")
                     messagebox.showerror("오류", f"송리스트 카드 생성에 실패했습니다:\n{err}")
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")
@@ -1182,6 +1214,7 @@ class LyricsApp(ctk.CTk):
         def run():
             try:
                 source = "서버"
+                self.after(0, lambda: self.log(f"[정보][PPT][서버요청] endpoint=/generate-ppt, 서버={server_url}"))
                 try:
                     generated_count = generate_pptx_via_server(
                         server_url,
@@ -1198,9 +1231,10 @@ class LyricsApp(ctk.CTk):
                     self.after(
                         0,
                         lambda err=e: self.log(
-                            f"[안내] PPT 서버가 응답하지 않아 로컬 PowerPoint COM으로 전환합니다. PowerPoint가 없으면 LibreOffice를 사용합니다: {err}"
+                            f"[경고][PPT][서버연결불가] 로컬 PowerPoint COM으로 전환합니다. PowerPoint가 없으면 LibreOffice를 사용합니다: {err}"
                         ),
                     )
+                    self.after(0, lambda: self.log("[정보][PPT][로컬생성] 로컬 PPT 생성을 시작합니다."))
                     result = build_integrated_pptx_with_local_office(
                         template_file,
                         sequence_entries,
@@ -1210,6 +1244,27 @@ class LyricsApp(ctk.CTk):
                     )
                     generated_count = result["appended_count"]
                     source = f"로컬 {result.get('method', 'Office')}"
+                except PptServerResponseError as e:
+                    if e.status_code and e.status_code >= 500:
+                        source = "로컬"
+                        self.after(
+                            0,
+                            lambda err=e: self.log(
+                                f"[경고][PPT][서버처리오류] 로컬 PowerPoint COM으로 전환합니다. PowerPoint가 없으면 LibreOffice를 사용합니다: {err}"
+                            ),
+                        )
+                        self.after(0, lambda: self.log("[정보][PPT][로컬생성] 로컬 PPT 생성을 시작합니다."))
+                        result = build_integrated_pptx_with_local_office(
+                            template_file,
+                            sequence_entries,
+                            lyrics_by_title,
+                            output_file,
+                            max_lines_per_slide,
+                        )
+                        generated_count = result["appended_count"]
+                        source = f"로컬 {result.get('method', 'Office')}"
+                    else:
+                        raise
 
                 def on_done():
                     self.log(f"\n[완료] 파워포인트 파일을 만들었습니다: '{output_file}' [{source}, {generated_count}곡]\n")
@@ -1220,7 +1275,8 @@ class LyricsApp(ctk.CTk):
             except PptServerResponseError as e:
                 err = e
                 def on_server_error():
-                    self.log(f"[오류] PPT 서버 요청이 거부되었습니다: {err}")
+                    status_text = f" status={err.status_code}" if err.status_code else ""
+                    self.log(f"[오류][PPT][서버요청실패]{status_text}: {err}")
                     messagebox.showerror("오류", f"PPT 서버 요청이 거부되었습니다:\n{err}")
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")
@@ -1228,7 +1284,7 @@ class LyricsApp(ctk.CTk):
             except LocalOfficeUnavailable as e:
                 err = e
                 def on_local_office_error():
-                    self.log(f"[오류] 로컬 PPT 생성에 실패했습니다: {err}")
+                    self.log(f"[오류][PPT][로컬오피스실패]: {err}")
                     messagebox.showerror("오류", str(err))
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")
@@ -1236,7 +1292,7 @@ class LyricsApp(ctk.CTk):
             except Exception as e:
                 err = e
                 def on_error():
-                    self.log(f"[오류] 파워포인트 파일을 생성하지 못했습니다: {err}")
+                    self.log(f"[오류][PPT][알수없음] 파워포인트 생성에 실패했습니다: {err}")
                     messagebox.showerror("오류", f"파워포인트 파일을 생성하지 못했습니다:\n{err}")
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")

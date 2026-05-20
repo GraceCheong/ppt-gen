@@ -25,7 +25,7 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 from constants import ASSETS_DIR_NAME, TEMPLATE_DIR_NAME, TEMPLATE_DOWNLOAD_URL
-from ppt_service import NoLyricsError, build_integrated_pptx, build_songlist_card_png
+from ppt_service import LocalOfficeUnavailable, NoLyricsError, build_integrated_pptx, build_songlist_card_png
 
 PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 TEMPLATE_SYNC_INTERVAL_SECONDS = 10 * 60
@@ -300,6 +300,8 @@ async def songlist_card(payload: str = Form(...), template: UploadFile = File(..
                 song_titles,
                 png_path,
             )
+        except LocalOfficeUnavailable as e:
+            raise HTTPException(503, detail=f"송리스트 카드 생성 실패(로컬 오피스 사용 불가): {e}")
         except Exception as e:
             raise HTTPException(500, detail=f"송리스트 카드 생성 실패: {e}")
 
