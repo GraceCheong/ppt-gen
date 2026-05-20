@@ -4,11 +4,13 @@ APP_WINDOW_TITLE = "PO,RR by a tempo"
 ASSETS_DIR_NAME = "assets"
 ICON_FILE_NAME = "atempo.png"
 BACKGROUND_FILE_NAME = "background.png"
-TEMPLATE_FILE_NAME = "template.pptx"
+TEMPLATE_DIR_NAME = "templates"
+TEMPLATE_FILE_NAME = ""
+TEMPLATE_DOWNLOAD_URL = "https://drive.google.com/drive/folders/1XkQSzkHLhPXoyPVQ8QB8zmpw9Yv5u0v7?usp=sharing"
 OUTPUT_FILE_NAME = "integrated_lyrics.pptx"
 SONGLIST_TEMPLATE_FILE_NAME = "songlist.pptx"
 SONGLIST_OUTPUT_FILE_NAME = "songlist_card.png"
-DEFAULT_SERVER_URL = "http://localhost:8000"
+DEFAULT_SERVER_URL = "http://220.93.112.53:8010"
 
 BRAND_FONT_CANDIDATES = (
     "Ok Mallang W",

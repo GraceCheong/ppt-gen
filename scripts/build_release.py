@@ -13,7 +13,7 @@ VERSION_RE = re.compile(r"^v1\.0\.(\d+)$")
 SPEC_FILE_NAME = "LyricsToPPT.spec"
 
 ASSET_FILES = (
-    "assets/template.pptx",
+    "assets/templates/template 2.pptx",
     "assets/songlist.pptx",
     "assets/sequences_sample.txt",
     "assets/atempo.png",

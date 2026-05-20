@@ -2,6 +2,9 @@
 import sys as _sys
 
 _is_win = _sys.platform == "win32"
+_hiddenimports = ['gdown']
+if _is_win:
+    _hiddenimports.extend(['comtypes', 'comtypes.client'])
 
 a = Analysis(
     ['src/main.py'],
@@ -10,11 +13,11 @@ a = Analysis(
     datas=[
         ('assets/atempo.png', 'assets'),
         ('assets/background.png', 'assets'),
-        ('assets/template.pptx', 'assets'),
+        ('assets/templates/template 2.pptx', 'assets/templates'),
         ('assets/songlist.pptx', 'assets'),
         ('assets/sequences_sample.txt', 'assets'),
     ],
-    hiddenimports=['comtypes', 'comtypes.client'] if _is_win else [],
+    hiddenimports=_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -4,10 +4,11 @@ from pptx import Presentation
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+TEMPLATE_PATH = ROOT_DIR / "assets" / "templates" / "template 2.pptx"
 
 
 def test_template_has_expected_layouts():
-    prs = Presentation(str(ROOT_DIR / "template.pptx"))
+    prs = Presentation(str(TEMPLATE_PATH))
     layout_names = [layout.name for layout in prs.slide_layouts]
 
     assert any("제목" in name or "Title" in name for name in layout_names)
@@ -15,7 +16,7 @@ def test_template_has_expected_layouts():
 
 
 def test_lyrics_layout_has_text_placeholder():
-    prs = Presentation(str(ROOT_DIR / "template.pptx"))
+    prs = Presentation(str(TEMPLATE_PATH))
     lyrics_layout = next(
         layout
         for layout in prs.slide_layouts

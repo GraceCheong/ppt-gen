@@ -5,14 +5,24 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, messagebox
 import customtkinter as ctk
-from pptx import Presentation
 try:
     from PIL import Image, ImageTk
 except ImportError:
     Image = None
     ImageTk = None
 
-from ppt_builder import append_lyrics_to_ppt, parse_sequence_text
+from ppt_builder import parse_sequence_text
+from ppt_server_client import (
+    PptServerResponseError,
+    PptServerUnavailable,
+    generate_pptx_via_server,
+    generate_songlist_card_via_server,
+)
+from ppt_service import (
+    LocalOfficeUnavailable,
+    build_integrated_pptx_with_local_office,
+    build_songlist_card_png,
+)
 from constants import *
 
 
@@ -134,12 +144,17 @@ class LyricsApp(ctk.CTk):
         self.suppress_song_select = False
         self.lyrics_store = {}
         self.current_song_var = tk.StringVar(value="곡을 선택하세요")
+        self.template_files = {}
+        self._template_download_running = False
+        self._template_refresh_complete = False
 
         self._background_image = None
         self._background_cache_key = None
         self.brand_font_family = self.resolve_font_family(BRAND_FONT_CANDIDATES)
         self.setup_style()
         self.create_widgets()
+        self.refresh_template_options()
+        self.after(300, self.ensure_templates_async)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def configure_window_icon(self):
@@ -185,6 +200,175 @@ class LyricsApp(ctk.CTk):
                     return asset_file
 
         return None
+
+    def get_template_download_dir(self):
+        template_dir = os.path.join(self.base_dir, ASSETS_DIR_NAME, TEMPLATE_DIR_NAME)
+        os.makedirs(template_dir, exist_ok=True)
+        return template_dir
+
+    def get_template_search_dirs(self):
+        dirs = [self.get_template_download_dir()]
+        bundle_dir = getattr(sys, "_MEIPASS", None)
+        if bundle_dir:
+            dirs.append(os.path.join(bundle_dir, ASSETS_DIR_NAME, TEMPLATE_DIR_NAME))
+
+        result = []
+        seen = set()
+        for template_dir in dirs:
+            template_dir = os.path.abspath(template_dir)
+            if template_dir in seen or not os.path.isdir(template_dir):
+                continue
+            seen.add(template_dir)
+            result.append(template_dir)
+        return result
+
+    def list_template_files(self):
+        templates = []
+        seen_names = set()
+
+        for template_dir in self.get_template_search_dirs():
+            for root, _, files in os.walk(template_dir):
+                for file_name in sorted(files, key=str.casefold):
+                    if not file_name.lower().endswith(".pptx"):
+                        continue
+
+                    path = os.path.join(root, file_name)
+                    display_name = os.path.relpath(path, template_dir).replace(os.sep, " / ")
+                    if display_name in seen_names:
+                        continue
+
+                    seen_names.add(display_name)
+                    templates.append((display_name, path))
+
+        return sorted(templates, key=lambda item: item[0].casefold(), reverse=True)
+
+    def refresh_template_options(self):
+        templates = self.list_template_files()
+        self.template_files = {display_name: path for display_name, path in templates}
+        values = list(self.template_files)
+
+        if not values:
+            self.template_combo.configure(values=["템플릿 없음"], state="disabled")
+            self.template_var.set("템플릿 없음")
+            return
+
+        self.template_combo.configure(values=values, state="normal")
+        current = self.template_var.get()
+
+        if current not in self.template_files:
+            self.template_var.set(values[0])
+
+    def get_selected_template_file(self):
+        selected = self.template_files.get(self.template_var.get())
+        if selected and os.path.exists(selected):
+            return selected
+
+        if TEMPLATE_FILE_NAME:
+            fallback = self.find_asset_file(TEMPLATE_FILE_NAME)
+            if fallback:
+                return fallback
+
+        templates = self.list_template_files()
+        return templates[0][1] if templates else None
+
+    def set_template_loading_state(self, loading, status_text=""):
+        self._template_download_running = loading
+        self._template_refresh_complete = status_text == "✓"
+        if hasattr(self, "template_refresh_btn"):
+            self.template_refresh_btn.configure(
+                state="disabled" if loading else "normal",
+                text=status_text or "↻",
+                fg_color="transparent",
+                border_width=0,
+            )
+
+    def animate_template_loading(self, index=0):
+        if not self._template_download_running:
+            return
+
+        frames = ("◐", "◓", "◑", "◒")
+        self.template_refresh_btn.configure(text=frames[index % len(frames)])
+        self.after(160, lambda: self.animate_template_loading(index + 1))
+
+    def on_template_refresh_enter(self, event=None):
+        if self._template_refresh_complete and not self._template_download_running:
+            self.template_refresh_btn.configure(text="↻")
+
+    def on_template_refresh_leave(self, event=None):
+        if self._template_refresh_complete and not self._template_download_running:
+            self.template_refresh_btn.configure(text="✓")
+
+    def ensure_templates_async(self, force=False):
+        if self._template_download_running:
+            return
+
+        self.set_template_loading_state(True)
+        self.animate_template_loading()
+
+        def run():
+            status_text = "✓"
+            try:
+                target_dir = self.get_template_download_dir()
+                before = {
+                    path
+                    for _, path in self.list_template_files()
+                    if os.path.abspath(path).startswith(os.path.abspath(target_dir))
+                }
+
+                self.after(0, lambda: self.log("[안내] 템플릿 저장소를 확인합니다."))
+
+                try:
+                    import gdown
+                except ImportError:
+                    status_text = "!"
+                    self.after(
+                        0,
+                        lambda: self.log("[오류] 템플릿 자동 다운로드에 필요한 gdown 패키지가 없습니다."),
+                    )
+                    return
+
+                try:
+                    gdown.download_folder(
+                        TEMPLATE_DOWNLOAD_URL,
+                        output=target_dir,
+                        quiet=True,
+                        use_cookies=False,
+                        resume=True,
+                        remaining_ok=True,
+                    )
+                except TypeError:
+                    gdown.download_folder(
+                        TEMPLATE_DOWNLOAD_URL,
+                        output=target_dir,
+                        quiet=True,
+                        use_cookies=False,
+                        resume=True,
+                    )
+
+                after = {
+                    path
+                    for _, path in self.list_template_files()
+                    if os.path.abspath(path).startswith(os.path.abspath(target_dir))
+                }
+                added = sorted(os.path.basename(path) for path in after - before)
+
+                def on_done():
+                    self.refresh_template_options()
+                    if added:
+                        self.log(f"[완료] 새 템플릿 {len(added)}개를 다운로드했습니다: {', '.join(added)}")
+                    elif force:
+                        self.log("[안내] 템플릿 목록을 최신 상태로 갱신했습니다.")
+                    else:
+                        self.log("[안내] 템플릿 목록을 확인했습니다.")
+                self.after(0, on_done)
+            except Exception as e:
+                status_text = "!"
+                err = e
+                self.after(0, lambda: self.log(f"[오류] 템플릿 다운로드에 실패했습니다: {err}"))
+            finally:
+                self.after(0, lambda text=status_text: self.set_template_loading_state(False, text))
+
+        threading.Thread(target=run, daemon=True).start()
 
     def resolve_font_family(self, candidates):
         available_fonts = set(tkfont.families(self))
@@ -237,22 +421,23 @@ class LyricsApp(ctk.CTk):
         settings_frame = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
         settings_frame.grid(row=1, column=0, sticky="ew", padx=28, pady=(10, 0))
         settings_frame.columnconfigure(3, weight=1)
+        settings_frame.columnconfigure(6, minsize=34)
 
         ctk.CTkLabel(
             settings_frame,
-            text="생성 설정",
+            text="설정",
             text_color=TEXT_FG,
             font=("Segoe UI", 13, "bold"),
         ).grid(row=0, column=0, sticky=tk.W, padx=(18, 16), pady=14)
 
         ctk.CTkLabel(
             settings_frame,
-            text="슬라이드당 줄 수",
+            text="슬라이드별 최대 줄 수",
             text_color=TEXT_FG,
             font=("Segoe UI", 12, "bold"),
         ).grid(row=0, column=1, sticky=tk.W)
 
-        self.max_lines_var = tk.StringVar(value="2")
+        self.max_lines_var = tk.StringVar(value="4")
         ctk.CTkComboBox(
             settings_frame,
             values=[str(value) for value in range(1, 11)],
@@ -272,28 +457,81 @@ class LyricsApp(ctk.CTk):
             dropdown_fg_color=TEXT_BG,
             dropdown_text_color=TEXT_FG,
             dropdown_hover_color=ACCENT_SOFT,
-        ).grid(row=0, column=2, sticky=tk.W, padx=(8, 12))
+        ).grid(row=0, column=2, sticky=tk.W, padx=(8, 18))
 
         ctk.CTkLabel(
             settings_frame,
-            text="설정한 줄 수를 그대로 사용합니다.",
-            text_color=MUTED_FG,
-            font=("Segoe UI", 11),
-        ).grid(row=0, column=3, sticky=tk.W)
-
-        ctk.CTkLabel(
-            settings_frame,
-            text="변환 서버",
+            text="템플릿",
             text_color=TEXT_FG,
             font=("Segoe UI", 12, "bold"),
-        ).grid(row=0, column=4, sticky=tk.W, padx=(24, 0))
+        ).grid(row=0, column=4, sticky=tk.E)
 
-        self.server_url_var = tk.StringVar(value="")
+        self.template_var = tk.StringVar(value="")
+        self.template_combo = ctk.CTkComboBox(
+            settings_frame,
+            values=["템플릿 확인 중"],
+            variable=self.template_var,
+            width=190,
+            height=34,
+            corner_radius=12,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            button_color=ACCENT,
+            button_hover_color=ACCENT_DARK,
+            fg_color=TEXT_BG,
+            bg_color="transparent",
+            text_color=TEXT_FG,
+            font=("맑은 고딕", 11),
+            dropdown_font=("맑은 고딕", 11),
+            dropdown_fg_color=TEXT_BG,
+            dropdown_text_color=TEXT_FG,
+            dropdown_hover_color=ACCENT_SOFT,
+        )
+        self.template_combo.grid(row=0, column=5, sticky=tk.E, padx=(8, 6))
+
+        self.template_refresh_slot = ctk.CTkFrame(
+            settings_frame,
+            width=34,
+            height=34,
+            fg_color="transparent",
+            bg_color="transparent",
+        )
+        self.template_refresh_slot.grid(row=0, column=6, sticky=tk.W, padx=(0, 18))
+        self.template_refresh_slot.grid_propagate(False)
+
+        self.template_refresh_btn = ctk.CTkButton(
+            self.template_refresh_slot,
+            text="↻",
+            command=lambda: self.ensure_templates_async(force=True),
+            width=34,
+            height=34,
+            corner_radius=12,
+            fg_color="transparent",
+            bg_color="transparent",
+            hover=False,
+            text_color=TEXT_FG,
+            border_width=0,
+            font=("Segoe UI", 15, "bold"),
+        )
+        self.template_refresh_btn.bind("<Enter>", self.on_template_refresh_enter)
+        self.template_refresh_btn.bind("<Leave>", self.on_template_refresh_leave)
+        self.template_refresh_slot.bind("<Enter>", self.on_template_refresh_enter)
+        self.template_refresh_slot.bind("<Leave>", self.on_template_refresh_leave)
+        self.template_refresh_btn.place(x=0, y=0, relwidth=1, relheight=1)
+
+        ctk.CTkLabel(
+            settings_frame,
+            text="PPT 서버",
+            text_color=TEXT_FG,
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=0, column=7, sticky=tk.E)
+
+        self.server_url_var = tk.StringVar(value=DEFAULT_SERVER_URL)
         ctk.CTkEntry(
             settings_frame,
             textvariable=self.server_url_var,
             placeholder_text=DEFAULT_SERVER_URL,
-            width=200,
+            width=190,
             height=34,
             corner_radius=12,
             border_width=1,
@@ -302,7 +540,7 @@ class LyricsApp(ctk.CTk):
             bg_color="transparent",
             text_color=TEXT_FG,
             font=("Segoe UI", 11),
-        ).grid(row=0, column=5, sticky=tk.W, padx=(8, 18))
+        ).grid(row=0, column=8, sticky=tk.E, padx=(8, 18))
 
         # --- Workspace ---
         workspace_frame = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
@@ -585,6 +823,9 @@ class LyricsApp(ctk.CTk):
         os.makedirs(output_dir, exist_ok=True)
         return output_dir
 
+    def get_server_url(self):
+        return self.server_url_var.get().strip() or DEFAULT_SERVER_URL
+
     def get_sequence_entries(self):
         if self.sequence_placeholder_visible:
             raise ValueError("레파토리 입력창이 비어 있습니다.")
@@ -802,14 +1043,31 @@ class LyricsApp(ctk.CTk):
 
         def run():
             try:
-                from songlist_builder import build_songlist_card
-                server_url = self.server_url_var.get().strip() or None
-                week_num = build_songlist_card(template_file, song_titles, output_file, server_url=server_url)
+                source = "서버"
+                server_url = self.get_server_url()
+                try:
+                    week_num = generate_songlist_card_via_server(
+                        server_url,
+                        template_file,
+                        song_titles,
+                        output_file,
+                    )
+                except PptServerUnavailable as e:
+                    source = "로컬"
+                    self.after(
+                        0,
+                        lambda err=e: self.log(
+                            f"[안내] PPT 서버가 응답하지 않아 로컬 PowerPoint COM으로 전환합니다. PowerPoint가 없으면 LibreOffice를 사용합니다: {err}"
+                        ),
+                    )
+                    week_num = build_songlist_card_png(template_file, song_titles, output_file)
+
                 def on_done():
-                    self.log(f"[완료] 송리스트 카드를 만들었습니다: '{output_file}' (Week {week_num})")
+                    week_text = f" (Week {week_num})" if week_num else ""
+                    self.log(f"[완료] 송리스트 카드를 만들었습니다: '{output_file}' [{source}]{week_text}")
                     messagebox.showinfo(
                         "완료",
-                        f"송리스트 카드를 생성했습니다.\n저장 위치: out/{SONGLIST_OUTPUT_FILE_NAME}\nWeek {week_num} 색상 적용",
+                        f"송리스트 카드를 생성했습니다.\n저장 위치: out/{SONGLIST_OUTPUT_FILE_NAME}",
                     )
                     self.set_editor_state("normal")
                     self.set_action_buttons_state("normal")
@@ -878,56 +1136,113 @@ class LyricsApp(ctk.CTk):
             return
 
         sequence_entries = self.sequence_entries
-        
+
         try:
             max_lines_per_slide = int(self.max_lines_var.get())
         except (TypeError, ValueError):
-            max_lines_per_slide = 2
+            max_lines_per_slide = 4
 
-        template_file = self.find_asset_file(TEMPLATE_FILE_NAME)
+        template_file = self.get_selected_template_file()
         if not template_file:
-            self.log(f"[오류] 템플릿 파일을 찾을 수 없습니다: 'assets/{TEMPLATE_FILE_NAME}'")
-            messagebox.showerror("오류", f"템플릿 파일을 찾을 수 없습니다:\nassets/{TEMPLATE_FILE_NAME}")
-            return
-            
-        try:
-            prs = Presentation(template_file)
-        except Exception as e:
-            self.log(f"[오류] 템플릿을 불러오지 못했습니다: {e}")
-            messagebox.showerror("오류", f"템플릿을 불러오지 못했습니다:\n{e}")
+            template_dir = os.path.join(ASSETS_DIR_NAME, TEMPLATE_DIR_NAME)
+            self.log(f"[오류] 템플릿 파일을 찾을 수 없습니다: '{template_dir}'")
+            messagebox.showerror("오류", f"템플릿 파일을 찾을 수 없습니다:\n{template_dir}")
             return
 
-        appended_count = 0
+        lyrics_by_title = dict(self.lyrics_store)
+        ready_count = 0
         for song_title, sequence_str in sequence_entries:
-            raw_lyrics = self.lyrics_store.get(song_title, "")
+            raw_lyrics = lyrics_by_title.get(song_title, "")
 
             if not raw_lyrics.strip():
                 self.log(f"[안내] '{song_title}' 가사가 없어 직접 입력 창을 엽니다.")
                 raw_lyrics = self.get_manual_lyrics(song_title)
                 if raw_lyrics:
                     self.lyrics_store[song_title] = raw_lyrics
+                    lyrics_by_title[song_title] = raw_lyrics
             else:
                 self.log(f"[진행] '{song_title}' 처리 중")
 
             if raw_lyrics.strip():
-                append_lyrics_to_ppt(prs, song_title, raw_lyrics, sequence_str, max_lines_per_slide)
-                appended_count += 1
+                ready_count += 1
             else:
                 self.log(f"[안내] '{song_title}' 가사가 없어 건너뜁니다.")
 
-        if appended_count == 0:
+        if ready_count == 0:
             self.log("[오류] 생성할 가사가 없습니다.")
             messagebox.showwarning("파워포인트 생성", "생성할 가사가 없습니다.")
             return
 
         output_file = os.path.join(self.get_output_dir(), OUTPUT_FILE_NAME)
-        try:
-            prs.save(output_file)
-            self.log(f"\n[완료] 파워포인트 파일을 만들었습니다: '{output_file}'\n")
-            messagebox.showinfo("완료", "파워포인트 파일을 생성했습니다.\n저장 위치: out/integrated_lyrics.pptx")
-        except Exception as e:
-            self.log(f"[오류] 파워포인트 파일을 저장하지 못했습니다: {e}")
-            messagebox.showerror("오류", f"파워포인트 파일을 저장하지 못했습니다:\n{e}")
+        server_url = self.get_server_url()
+
+        self.set_action_buttons_state("disabled")
+        self.set_editor_state("disabled")
+
+        def run():
+            try:
+                source = "서버"
+                try:
+                    generated_count = generate_pptx_via_server(
+                        server_url,
+                        template_file,
+                        sequence_entries,
+                        lyrics_by_title,
+                        max_lines_per_slide,
+                        output_file,
+                    )
+                    if generated_count is None:
+                        generated_count = ready_count
+                except PptServerUnavailable as e:
+                    source = "로컬"
+                    self.after(
+                        0,
+                        lambda err=e: self.log(
+                            f"[안내] PPT 서버가 응답하지 않아 로컬 PowerPoint COM으로 전환합니다. PowerPoint가 없으면 LibreOffice를 사용합니다: {err}"
+                        ),
+                    )
+                    result = build_integrated_pptx_with_local_office(
+                        template_file,
+                        sequence_entries,
+                        lyrics_by_title,
+                        output_file,
+                        max_lines_per_slide,
+                    )
+                    generated_count = result["appended_count"]
+                    source = f"로컬 {result.get('method', 'Office')}"
+
+                def on_done():
+                    self.log(f"\n[완료] 파워포인트 파일을 만들었습니다: '{output_file}' [{source}, {generated_count}곡]\n")
+                    messagebox.showinfo("완료", "파워포인트 파일을 생성했습니다.\n저장 위치: out/integrated_lyrics.pptx")
+                    self.set_editor_state("normal")
+                    self.set_action_buttons_state("normal")
+                self.after(0, on_done)
+            except PptServerResponseError as e:
+                err = e
+                def on_server_error():
+                    self.log(f"[오류] PPT 서버 요청이 거부되었습니다: {err}")
+                    messagebox.showerror("오류", f"PPT 서버 요청이 거부되었습니다:\n{err}")
+                    self.set_editor_state("normal")
+                    self.set_action_buttons_state("normal")
+                self.after(0, on_server_error)
+            except LocalOfficeUnavailable as e:
+                err = e
+                def on_local_office_error():
+                    self.log(f"[오류] 로컬 PPT 생성에 실패했습니다: {err}")
+                    messagebox.showerror("오류", str(err))
+                    self.set_editor_state("normal")
+                    self.set_action_buttons_state("normal")
+                self.after(0, on_local_office_error)
+            except Exception as e:
+                err = e
+                def on_error():
+                    self.log(f"[오류] 파워포인트 파일을 생성하지 못했습니다: {err}")
+                    messagebox.showerror("오류", f"파워포인트 파일을 생성하지 못했습니다:\n{err}")
+                    self.set_editor_state("normal")
+                    self.set_action_buttons_state("normal")
+                self.after(0, on_error)
+
+        threading.Thread(target=run, daemon=True).start()
 
 if __name__ == "__main__":
     app = LyricsApp()

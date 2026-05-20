@@ -1,6 +1,7 @@
 beautifulsoup4
 comtypes
 customtkinter
+gdown
 pillow
 pyinstaller
 python-pptx

@@ -10,6 +10,9 @@ sys.path.insert(0, str(ROOT_DIR / "src"))
 from ppt_builder import append_lyrics_to_ppt, chunk_text, parse_lyrics_text
 
 
+TEMPLATE_PATH = ROOT_DIR / "assets" / "templates" / "template 2.pptx"
+
+
 SAMPLE_LYRICS = """V1
 가사 첫 번째 줄
 가사 두 번째 줄
@@ -37,7 +40,7 @@ def test_chunk_text_respects_max_lines():
 
 
 def test_append_lyrics_to_ppt_adds_slides():
-    prs = Presentation(str(ROOT_DIR / "assets" / "template.pptx"))
+    prs = Presentation(str(TEMPLATE_PATH))
     before_count = len(prs.slides)
 
     append_lyrics_to_ppt(
@@ -52,7 +55,7 @@ def test_append_lyrics_to_ppt_adds_slides():
 
 
 def test_append_lyrics_to_ppt_keeps_user_selected_four_line_chunks():
-    prs = Presentation(str(ROOT_DIR / "assets" / "template.pptx"))
+    prs = Presentation(str(TEMPLATE_PATH))
     before_count = len(prs.slides)
     long_lyrics = """V
 이 줄은 긴 줄 기준보다 충분히 긴 가사입니다

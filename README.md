@@ -1,8 +1,8 @@
 # PO,RR
 
-예배 레파토리와 가사를 입력해 하나의 PowerPoint 파일로 만들어 주는 Windows용 도구입니다.
+예배 레파토리와 가사를 입력해 하나의 PowerPoint 파일로 만들어 주는 도구입니다. GUI 클라이언트는 PPT 서버를 먼저 사용하고, 서버가 응답하지 않으면 로컬 PPT 처리로 자동 전환합니다.
 
-`LyricsToPPT.exe`를 실행하면 작업 표시줄과 창 제목에는 `PO,RR by a tempo`가 표시되고, 프로그램 화면에는 `PO,RR`가 표시됩니다. `assets/template.pptx`를 기준으로 파워포인트를 생성하며, 곡 순서와 진행 순서는 `레파토리 입력` 창에 직접 입력합니다.
+`LyricsToPPT.exe`를 실행하면 작업 표시줄과 창 제목에는 `PO,RR by a tempo`가 표시되고, 프로그램 화면에는 `PO,RR`가 표시됩니다. `assets/templates/template 2.pptx`를 기준으로 파워포인트를 생성하며, 곡 순서와 진행 순서는 `레파토리 입력` 창에 직접 입력합니다.
 
 ## 빠른 시작
 
@@ -10,7 +10,7 @@
 
 ```text
 LyricsToPPT.exe
-assets/template.pptx
+assets/templates/template 2.pptx
 assets/atempo.png
 ```
 
@@ -29,7 +29,7 @@ I-V1-V1-C-Inter-V2-C-B-C-C
 
 5. 가사 편집창에 직접 입력하거나, `가사 다운로드` 버튼으로 자동으로 가져옵니다.
 
-6. 필요한 설정을 확인한 뒤 `파워포인트 생성` 버튼을 누릅니다.
+6. 필요한 설정, 템플릿, `PPT 서버` 주소를 확인한 뒤 `파워포인트 생성` 버튼을 누릅니다.
 
 7. 생성된 `out/integrated_lyrics.pptx` 파일을 PowerPoint에서 엽니다.
 
@@ -37,14 +37,20 @@ I-V1-V1-C-Inter-V2-C-B-C-C
 
 ```text
 src/
-  lyrics_to_ppt.py
+  main.py
+  ppt_server_client.py
+  ppt_service.py
   ppt_builder.py
+  songlist_builder.py
   auto_lyrics_downloader.py
+server/
+  convert_server.py
+  requirements.txt
 scripts/
   build_release.py
   LyricsToPPT.spec
 assets/
-  template.pptx
+  templates/template 2.pptx
   atempo.png
   background.png
   sequences_sample.txt
@@ -53,9 +59,11 @@ docs/
 requirements.txt
 ```
 
-### `assets/template.pptx`
+### `assets/templates/`
 
-파워포인트 생성에 사용할 템플릿 파일입니다. 반드시 `assets/` 폴더 안에 있어야 합니다.
+파워포인트 생성에 사용할 템플릿 파일이 들어가는 폴더입니다. 프로그램 시작 시 이 폴더의 모든 `.pptx` 파일을 템플릿 드롭다운에 불러옵니다.
+
+템플릿 폴더는 Google Drive 공유 폴더와 동기화됩니다. 실행 시 새 템플릿이 있는지 확인하고, 다운로드가 끝나면 드롭다운 목록을 자동으로 갱신합니다. 드롭다운 옆의 새로고침 버튼으로 수동 갱신할 수도 있습니다.
 
 PowerPoint의 슬라이드 마스터에 아래 레이아웃이 준비되어 있어야 합니다.
 
@@ -142,18 +150,39 @@ pip install -r requirements.txt
 파워포인트 생성 GUI를 실행합니다.
 
 ```powershell
-python src/lyrics_to_ppt.py
+python src/main.py
+```
+
+## PPT 서버 실행하기
+
+PPT 생성과 송리스트 카드 변환은 서버를 먼저 사용합니다.
+
+```powershell
+pip install -r server/requirements.txt
+uvicorn server.convert_server:app --host 0.0.0.0 --port 8000
+```
+
+클라이언트의 `PPT 서버` 입력값이 비어 있으면 기본 서버 주소를 사용합니다. 서버가 꺼져 있거나 응답하지 않으면 클라이언트는 로컬 PowerPoint COM 방식으로 자동 전환합니다.
+
+로컬 fallback은 PowerPoint COM을 먼저 사용합니다. PowerPoint가 설치되어 있지 않거나 COM을 사용할 수 없으면 LibreOffice를 사용하고, LibreOffice도 없으면 설치 안내를 표시합니다.
+
+```text
+https://www.libreoffice.org/download/download-libreoffice/
 ```
 
 ## Windows에서 자주 생기는 문제
 
 ### `template.pptx`를 찾을 수 없다고 나오는 경우
 
-`assets/template.pptx`가 `LyricsToPPT.exe`와 같은 폴더의 `assets` 안에 있는지 확인하세요.
+`assets/templates/template 2.pptx`가 `LyricsToPPT.exe`와 같은 폴더의 `assets/templates` 안에 있는지 확인하세요.
 
 ### 파워포인트 저장에 실패하는 경우
 
 생성하려는 `out/integrated_lyrics.pptx` 파일이 PowerPoint에서 열려 있으면 저장에 실패할 수 있습니다. 열려 있는 파일을 닫고 다시 실행하세요.
+
+### 송리스트 카드 PNG 생성에 실패하는 경우
+
+PPT 서버가 응답하지 않으면 로컬 PowerPoint COM으로 PPT 생성과 송리스트 이미지 변환을 시도합니다. PowerPoint를 사용할 수 없다면 LibreOffice를 설치한 뒤 다시 실행하세요.
 
 ### Windows 보안 경고가 나오는 경우
 

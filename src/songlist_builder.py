@@ -189,25 +189,37 @@ def export_pptx_to_png(pptx_path, png_path, server_url=None):
 
     Priority:
       1. Conversion server (if server_url provided)
-      2. LibreOffice (if installed locally)
-      3. PowerPoint COM (Windows only)
+      2. Local PowerPoint COM (Windows only)
+      3. LibreOffice (if installed locally)
     """
+    errors = []
+
     if server_url:
-        _export_via_server(pptx_path, png_path, server_url)
-        return
+        try:
+            _export_via_server(pptx_path, png_path, server_url)
+            return
+        except Exception as e:
+            errors.append(f"서버 변환 실패: {e}")
+
+    if sys.platform == "win32":
+        try:
+            _export_via_com(pptx_path, png_path)
+            return
+        except Exception as e:
+            errors.append(f"로컬 PowerPoint 변환 실패: {e}")
 
     if _export_via_libreoffice(pptx_path, png_path):
         return
 
-    if sys.platform == "win32":
-        _export_via_com(pptx_path, png_path)
-        return
+    errors.append("LibreOffice를 찾을 수 없거나 PNG 변환에 실패했습니다.")
 
+    detail = "\n".join(f"- {message}" for message in errors)
     raise RuntimeError(
-        "PNG 내보내기 방법이 없습니다.\n"
-        "다음 중 하나를 선택하세요:\n"
-        "  • 변환 서버 URL을 설정하세요\n"
-        "  • LibreOffice를 설치하세요: https://www.libreoffice.org"
+        "PPT를 PNG로 변환할 수 없습니다.\n"
+        f"{detail}\n\n"
+        "서버가 응답하지 않으면 로컬 PowerPoint로 변환을 시도합니다. "
+        "로컬 PowerPoint도 사용할 수 없다면 LibreOffice를 설치하세요:\n"
+        "https://www.libreoffice.org/download/download-libreoffice/"
     )
 
 
