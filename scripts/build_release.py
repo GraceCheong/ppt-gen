@@ -7,7 +7,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-APP_DIR_NAME = "LyricsToPPT"
+APP_DIR_NAME = "PORR_atempo"
 RELEASE_DIR_NAME = "Release"
 VERSION_RE = re.compile(r"^v1\.0\.(\d+)$")
 SPEC_FILE_NAME = "LyricsToPPT.spec"
