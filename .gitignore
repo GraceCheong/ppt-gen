@@ -1,10 +1,10 @@
 # Generated PowerPoint files
 *.pptx
-!template.pptx
+!assets/template.pptx
 
 # Local repertoire and lyrics files
 *.txt
-!sequences_sample.txt
+!assets/sequences_sample.txt
 
 # Build outputs
 *.exe
@@ -22,3 +22,4 @@ __pycache__/
 out/
 Release/
 *.zip
+.claude

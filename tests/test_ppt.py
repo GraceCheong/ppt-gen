@@ -5,9 +5,9 @@ from pptx import Presentation
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT_DIR))
+sys.path.insert(0, str(ROOT_DIR / "src"))
 
-from lyrics_to_ppt import append_lyrics_to_ppt, chunk_text, parse_lyrics_text
+from ppt_builder import append_lyrics_to_ppt, chunk_text, parse_lyrics_text
 
 
 SAMPLE_LYRICS = """V1
@@ -37,7 +37,7 @@ def test_chunk_text_respects_max_lines():
 
 
 def test_append_lyrics_to_ppt_adds_slides():
-    prs = Presentation(str(ROOT_DIR / "template.pptx"))
+    prs = Presentation(str(ROOT_DIR / "assets" / "template.pptx"))
     before_count = len(prs.slides)
 
     append_lyrics_to_ppt(
@@ -46,14 +46,13 @@ def test_append_lyrics_to_ppt_adds_slides():
         SAMPLE_LYRICS,
         "I-V1-C-Out",
         max_lines_per_slide=2,
-        long_line_threshold=18,
     )
 
     assert len(prs.slides) > before_count
 
 
 def test_append_lyrics_to_ppt_keeps_user_selected_four_line_chunks():
-    prs = Presentation(str(ROOT_DIR / "template.pptx"))
+    prs = Presentation(str(ROOT_DIR / "assets" / "template.pptx"))
     before_count = len(prs.slides)
     long_lyrics = """V
 이 줄은 긴 줄 기준보다 충분히 긴 가사입니다
@@ -67,7 +66,6 @@ def test_append_lyrics_to_ppt_keeps_user_selected_four_line_chunks():
         long_lyrics,
         "V",
         max_lines_per_slide=4,
-        long_line_threshold=18,
     )
 
     assert len(prs.slides) == before_count + 2
