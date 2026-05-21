@@ -8,7 +8,7 @@ from pptx import Presentation
 
 from ppt_builder import append_closing_slide, append_lyrics_to_ppt, reset_integrated_ppt
 from powerpoint_com import create_powerpoint_application, open_presentation_hidden
-from songlist_builder import build_songlist_card, _find_libreoffice
+from songlist_builder import build_songlist_card, find_libreoffice
 
 
 class NoLyricsError(ValueError):
@@ -102,7 +102,7 @@ def _save_pptx_via_powerpoint_com(source_pptx_path, output_pptx_path):
 
 
 def _save_pptx_via_libreoffice(source_pptx_path, output_pptx_path):
-    lo = _find_libreoffice()
+    lo = find_libreoffice()
     if not lo:
         return False
 
@@ -181,7 +181,7 @@ def build_songlist_card_png(template_path, song_titles, output_png_path):
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
     try:
-        return build_songlist_card(template_path, song_titles, output_png_path)
+        return build_songlist_card(template_path, song_titles, output_png_path, skip_com=True)
     except Exception as e:
         raise LocalOfficeUnavailable(
             "로컬에서 송리스트 카드 PNG를 생성할 수 없습니다.\n"

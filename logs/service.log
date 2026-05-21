@@ -1,0 +1,244 @@
+[2026-05-21  5:02:38.75] Service starting 
+[2026-05-21  5:02:38.82] Starting uvicorn server 
+[2026-05-21  5:02:38.98] ERROR: Server failed with exit code 1 
+[2026-05-21 05:03:51,337] INFO: Starting PPT Generation Server...
+[2026-05-21 05:03:51,337] INFO: Working directory: C:\dev\ppt-gen
+[2026-05-21 05:03:51,617] INFO: uvicorn module found
+[2026-05-21 05:03:51,617] INFO: Starting uvicorn server on 0.0.0.0:8010...
+[2026-05-21 05:03:51,618] ERROR: Failed to start server: Unable to configure formatter 'default'
+Traceback (most recent call last):
+  File "C:\Users\wjdek\miniconda3\Lib\logging\config.py", line 583, in configure
+    formatters[name] = self.configure_formatter(
+                       ~~~~~~~~~~~~~~~~~~~~~~~~^
+                                        formatters[name])
+                                        ^^^^^^^^^^^^^^^^^
+  File "C:\Users\wjdek\miniconda3\Lib\logging\config.py", line 693, in configure_formatter
+    result = self.configure_custom(config)
+  File "C:\Users\wjdek\miniconda3\Lib\logging\config.py", line 487, in configure_custom
+    result = c(**kwargs)
+  File "C:\Users\wjdek\miniconda3\Lib\site-packages\uvicorn\logging.py", line 42, in __init__
+    self.use_colors = sys.stdout.isatty()
+                      ^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'isatty'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\dev\ppt-gen\scripts\run_service.py", line 51, in main
+    uvicorn.run(
+    ~~~~~~~~~~~^
+        "server.convert_server:app",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        log_level="info"
+        ^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\wjdek\miniconda3\Lib\site-packages\uvicorn\main.py", line 552, in run
+    config = Config(
+        app,
+    ...<48 lines>...
+        reset_contextvars=reset_contextvars,
+    )
+  File "C:\Users\wjdek\miniconda3\Lib\site-packages\uvicorn\config.py", line 284, in __init__
+    self.configure_logging()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\wjdek\miniconda3\Lib\site-packages\uvicorn\config.py", line 379, in configure_logging
+    logging.config.dictConfig(self.log_config)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\wjdek\miniconda3\Lib\logging\config.py", line 935, in dictConfig
+    dictConfigClass(config).configure()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\wjdek\miniconda3\Lib\logging\config.py", line 586, in configure
+    raise ValueError('Unable to configure '
+                     'formatter %r' % name) from e
+ValueError: Unable to configure formatter 'default'
+[2026-05-21 05:04:41,406] INFO: Starting PPT Generation Server...
+[2026-05-21 05:04:41,406] INFO: Working directory: C:\dev\ppt-gen
+[2026-05-21 05:04:41,642] INFO: uvicorn module found
+[2026-05-21 05:04:41,642] INFO: Starting uvicorn server on 0.0.0.0:8010...
+[2026-05-21 05:04:41,643] ERROR: Failed to start server: No module named 'server'
+Traceback (most recent call last):
+  File "C:\dev\ppt-gen\scripts\run_service.py", line 51, in main
+    uvicorn.run(
+    ~~~~~~~~~~~^
+        "server.convert_server:app",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        log_level="info"
+        ^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\wjdek\miniconda3\Lib\site-packages\uvicorn\main.py", line 609, in run
+    config.load_app()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Users\wjdek\miniconda3\Lib\site-packages\uvicorn\config.py", line 415, in load_app
+    return import_from_string(self.app)
+  File "C:\Users\wjdek\miniconda3\Lib\site-packages\uvicorn\importer.py", line 22, in import_from_string
+    raise exc from None
+  File "C:\Users\wjdek\miniconda3\Lib\site-packages\uvicorn\importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "C:\Users\wjdek\miniconda3\Lib\importlib\__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1310, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'server'
+===== 2026-05-21  5:09:41.37 starting ===== 
+Failed to run 'conda activate base'.
+[ERROR] conda activate failed 
+===== 2026-05-21  5:12:08.06 starting ===== 
+Failed to run 'conda activate base'.
+[ERROR] conda activate failed 
+===== 2026-05-21  5:13:24.04 starting ===== 
+INFO:     Started server process [5396]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8010 (Press CTRL+C to quit)
+[template-sync] 새 템플릿 없음
+INFO:     175.193.60.217:9546 - "POST /generate-ppt HTTP/1.1" 200 OK
+INFO:     175.193.60.217:10426 - "POST /songlist-card HTTP/1.1" 503 Service Unavailable
+[client-error-report] context=songlist server processing fallback message=endpoint=/songlist-card, 서버 처리 오류 503: 송리스트 카드 생성 실패(로컬 오피스 사용 불가): 로컬에서 송리스트 카드 PNG를 생성할 수 없습니다.
+- 원인: PPT를 PNG로 변환할 수 없습니다.
+- 로컬 PowerPoint 변환 실패: [WinError -2147024891] 액세스가 거부되었습니다
+- LibreOffice를 찾을 수 없거나 PNG 변환에 실패했습니다.
+
+서버가 응답하지 않으면 로컬 PowerPoint로 변환을 시도합니다. 로컬 PowerPoint도 사용할 수 없다면 LibreOffice를 설치하세요:
+https://www.libreoffice.org/download/download-libreoffice/ saved=C:\dev\ppt-gen\out\error_reports\2026-05-20.jsonl
+INFO:     175.193.60.217:10427 - "POST /client-error-report HTTP/1.1" 200 OK
+^C===== 2026-05-21  5:22:57.86 starting ===== 
+INFO:     Started server process [12348]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8010 (Press CTRL+C to quit)
+INFO:     175.193.60.217:12186 - "POST /generate-ppt HTTP/1.1" 200 OK
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+INFO:     69.5.169.86:49575 - "GET / HTTP/1.1" 404 Not Found
+INFO:     193.176.29.21:15424 - "GET / HTTP/1.1" 404 Not Found
+INFO:     5.226.140.94:11122 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+[template-sync] 새 템플릿 없음
+INFO:     175.193.60.217:8538 - "GET /health HTTP/1.1" 200 OK
+INFO:     175.193.60.217:1800 - "GET /health HTTP/1.1" 200 OK
+INFO:     175.193.60.217:1800 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+[EXIT] code=1 
+2026-05-21 03:44:36.648: INFO:     Started server process [3456]
+2026-05-21 03:44:36.649: INFO:     Waiting for application startup.
+2026-05-21 03:44:36.650: INFO:     Application startup complete.
+2026-05-21 03:44:36.650: INFO:     Uvicorn running on http://0.0.0.0:8010 (Press CTRL+C to quit)
+2026-05-21 03:45:16.098: [template-sync] 새 템플릿 없음
+2026-05-21 03:45:16.098: INFO:     175.193.60.217:9384 - "GET /health HTTP/1.1" 200 OK
+2026-05-21 03:45:17.040: INFO:     175.193.60.217:9384 - "GET /health HTTP/1.1" 200 OK
+2026-05-21 03:45:17.542: INFO:     175.193.60.217:9384 - "GET /health HTTP/1.1" 200 OK
+2026-05-21 03:45:17.749: INFO:     175.193.60.217:9384 - "GET /health HTTP/1.1" 200 OK
+2026-05-21 03:45:17.939: INFO:     175.193.60.217:9384 - "GET /health HTTP/1.1" 200 OK
+2026-05-21 03:45:18.146: INFO:     175.193.60.217:9384 - "GET /health HTTP/1.1" 200 OK
+2026-05-21 03:45:18.362: INFO:     175.193.60.217:9384 - "GET /health HTTP/1.1" 200 OK
+2026-05-21 03:46:10.130: [client-error-report] context=manual-test message=endpoint test saved=C:\dev\ppt-gen\out\error_reports\2026-05-21.jsonl
+2026-05-21 03:46:10.130: INFO:     175.193.60.217:5913 - "POST /client-error-report HTTP/1.1" 200 OK
+2026-05-21 03:50:52.289: INFO:     175.193.60.217:3995 - "POST /generate-ppt HTTP/1.1" 200 OK
+2026-05-21 03:51:20.915: INFO:     175.193.60.217:4016 - "POST /generate-ppt HTTP/1.1" 200 OK
+2026-05-21 03:52:01.480: INFO:     175.193.60.217:5010 - "POST /generate-ppt HTTP/1.1" 200 OK
+2026-05-21 03:52:01.584: [client-error-report] context=ppt unknown message=[Errno 13] Permission denied: 'C:\\Users\\wjdek\\Downloads\\PORR_atempo-Windows-v1.0.3\\PORR_atempo\\out\\integrated_lyrics.pptx' saved=C:\dev\ppt-gen\out\error_reports\2026-05-21.jsonl
+2026-05-21 03:52:01.584: INFO:     175.193.60.217:5011 - "POST /client-error-report HTTP/1.1" 200 OK
+2026-05-21 03:52:05.924: INFO:     175.193.60.217:5014 - "POST /generate-ppt HTTP/1.1" 200 OK
+2026-05-21 03:52:58.586: INFO:     175.193.60.217:5844 - "POST /songlist-card HTTP/1.1" 503 Service Unavailable
+2026-05-21 03:52:58.668: [client-error-report] context=songlist server processing fallback message=endpoint=/songlist-card, 서버 처리 오류 503: 송리스트 카드 생성 실패(로컬 오피스 사용 불가): 로컬에서 송리스트 카드 PNG를 생성할 수 없습니다.
+2026-05-21 03:52:58.668: - 원인: PPT를 PNG로 변환할 수 없습니다.
+2026-05-21 03:52:58.668: - 로컬 PowerPoint 변환 실패: [WinError -2147024891] 액세스가 거부되었습니다
+2026-05-21 03:52:58.668: - LibreOffice를 찾을 수 없거나 PNG 변환에 실패했습니다.
+2026-05-21 03:52:58.668: 
+2026-05-21 03:52:58.668: 서버가 응답하지 않으면 로컬 PowerPoint로 변환을 시도합니다. 로컬 PowerPoint도 사용할 수 없다면 LibreOffice를 설치하세요:
+2026-05-21 03:52:58.668: https://www.libreoffice.org/download/download-libreoffice/ saved=C:\dev\ppt-gen\out\error_reports\2026-05-21.jsonl
+2026-05-21 03:52:58.668: INFO:     175.193.60.217:5845 - "POST /client-error-report HTTP/1.1" 200 OK
+2026-05-21 04:01:23.630: [template-sync] 새 템플릿 없음
+2026-05-21 04:01:23.630: INFO:     175.193.60.217:12836 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:01:55.209: INFO:     175.193.60.217:2333 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:01:58.948: INFO:     175.193.60.217:2334 - "POST /generate-ppt HTTP/1.1" 200 OK
+2026-05-21 04:02:21.136: INFO:     175.193.60.217:2369 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:04:40.763: INFO:     175.193.60.217:12598 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:06:35.347: [template-sync] 새 템플릿 없음
+2026-05-21 04:06:35.347: INFO:     175.193.60.217:13022 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:06:58.769: INFO:     175.193.60.217:13043 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:07:06.091: INFO:     175.193.60.217:13045 - "POST /generate-ppt HTTP/1.1" 200 OK
+2026-05-21 04:14:04.166: INFO:     175.193.60.217:8251 - "POST /generate-ppt HTTP/1.1" 200 OK
+2026-05-21 04:14:17.237: INFO:     175.193.60.217:8290 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:21:28.883: [template-sync] 새 템플릿 없음
+2026-05-21 04:21:28.883: INFO:     175.193.60.217:10526 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:23:42.872: INFO:     175.193.60.217:6098 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:26:15.345: [template-sync] 새 템플릿 없음
+2026-05-21 04:26:15.345: INFO:     175.193.60.217:5839 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:26:31.808: INFO:     175.193.60.217:5842 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:26:53.839: INFO:     Shutting down
+2026-05-21 04:26:53.950: INFO:     Waiting for application shutdown.
+2026-05-21 04:26:53.951: INFO:     Application shutdown complete.
+2026-05-21 04:26:53.951: INFO:     Finished server process [3456]
+2026-05-21 04:32:16.938: INFO:     Started server process [4928]
+2026-05-21 04:32:16.938: INFO:     Waiting for application startup.
+2026-05-21 04:32:16.939: INFO:     Application startup complete.
+2026-05-21 04:32:16.940: INFO:     Uvicorn running on http://0.0.0.0:8010 (Press CTRL+C to quit)
+2026-05-21 04:34:35.950: [template-sync] 새 템플릿 없음
+2026-05-21 04:34:35.950: INFO:     175.193.60.217:4421 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:34:44.576: INFO:     175.193.60.217:4423 - "POST /generate-ppt HTTP/1.1" 200 OK
+2026-05-21 04:39:12.989: INFO:     175.193.60.217:9719 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 04:57:06.391: INFO:     Shutting down
+2026-05-21 04:57:06.501: INFO:     Waiting for application shutdown.
+2026-05-21 04:57:06.502: INFO:     Application shutdown complete.
+2026-05-21 04:57:06.503: INFO:     Finished server process [4928]
+2026-05-21 04:57:06.509: [template-sync] 새 템플릿 없음
+2026-05-21 04:57:06.509: [template-sync] 새 템플릿 없음
+2026-05-21 05:03:14.235: INFO:     Started server process [12840]
+2026-05-21 05:03:14.235: INFO:     Waiting for application startup.
+2026-05-21 05:03:14.236: INFO:     Application startup complete.
+2026-05-21 05:03:14.237: INFO:     Uvicorn running on http://0.0.0.0:8010 (Press CTRL+C to quit)
+2026-05-21 05:03:20.736: INFO:     175.193.60.217:13291 - "POST /songlist-card HTTP/1.1" 200 OK
+2026-05-21 05:09:03.492: INFO:     Shutting down
+2026-05-21 05:09:03.599: INFO:     Waiting for application shutdown.
+2026-05-21 05:09:03.599: INFO:     Application shutdown complete.
+2026-05-21 05:09:03.599: INFO:     Finished server process [12840]
+2026-05-21 05:09:03.600: [template-sync] 새 템플릿 없음

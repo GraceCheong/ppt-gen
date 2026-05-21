@@ -1,15 +1,24 @@
 import datetime
+import logging
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 
+from lxml import etree
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.oxml.ns import qn
 from pptx.util import Pt
+
 from ppt_builder import set_editable_text
 from powerpoint_com import create_powerpoint_application, open_presentation_hidden
+
+logger = logging.getLogger(__name__)
+
+_TITLE_FONT = "Diphylleia"
+_TITLE_FONT_SIZE = Pt(32)
 
 # 52 natural text colors, one per ISO week of the year.
 # Ordered to follow a seasonal progression (winter → spring → summer → autumn → winter).
@@ -80,10 +89,40 @@ def build_songlist_pptx(template_path, song_titles, output_pptx_path):
                 idx = int(rest) - 1
                 title = song_titles[idx] if idx < len(song_titles) else ""
                 set_editable_text(shape, title)
+                total_runs = sum(len(para.runs) for para in shape.text_frame.paragraphs)
+                logger.debug(
+                    "[폰트설정] shape=%r alt=%r title=%r paragraphs=%d total_runs=%d",
+                    shape.name, alt, title,
+                    len(shape.text_frame.paragraphs), total_runs,
+                )
+                if total_runs == 0:
+                    logger.warning(
+                        "[폰트설정 실패] shape=%r alt=%r: runs가 없어 폰트를 적용할 수 없습니다. "
+                        "set_editable_text 이후 텍스트 프레임에 run이 생성되지 않았습니다.",
+                        shape.name, alt,
+                    )
                 for para in shape.text_frame.paragraphs:
                     for run in para.runs:
-                        run.font.name = "Diphylleia"
-                        run.font.size = Pt(32)
+                        try:
+                            run.font.name = _TITLE_FONT
+                            run.font.size = _TITLE_FONT_SIZE
+                            # 한글 텍스트는 Latin이 아닌 East Asian 폰트를 참조하므로
+                            # <a:ea typeface> 도 명시적으로 설정해야 적용됨
+                            rPr = run._r.get_or_add_rPr()
+                            ea_elem = rPr.find(qn("a:ea"))
+                            if ea_elem is None:
+                                ea_elem = etree.SubElement(rPr, qn("a:ea"))
+                            ea_elem.set("typeface", _TITLE_FONT)
+                            logger.debug(
+                                "[폰트설정 성공] shape=%r run text=%r font.name=%r font.size=%s",
+                                shape.name, run.text, run.font.name, run.font.size,
+                            )
+                        except Exception as e:
+                            logger.error(
+                                "[폰트설정 오류] shape=%r run text=%r: %s",
+                                shape.name, run.text, e,
+                                exc_info=True,
+                            )
 
         # Apply week color to "song" and "list" shapes
         if alt.lower() in ("song", "list"):
@@ -101,7 +140,7 @@ def _slide_px(pptx_path, long_edge_px=2000):
     return int(long_edge_px * w_emu / h_emu), long_edge_px
 
 
-def _find_libreoffice():
+def find_libreoffice():
     """Return path to LibreOffice executable, or None if not found."""
     if sys.platform == "win32":
         candidates = [
@@ -121,7 +160,7 @@ def _find_libreoffice():
 
 
 def _export_via_libreoffice(pptx_path, png_path):
-    lo = _find_libreoffice()
+    lo = find_libreoffice()
     if not lo:
         return False
 
@@ -130,7 +169,7 @@ def _export_via_libreoffice(pptx_path, png_path):
     output_dir = os.path.dirname(png_abs)
 
     result = subprocess.run(
-        [lo, "--headless", "--convert-to", "png", "--outdir", output_dir, pptx_abs],
+        [lo, "--headless", "--norestore", "--convert-to", "png", "--outdir", output_dir, pptx_abs],
         capture_output=True,
         timeout=60,
     )
@@ -196,12 +235,12 @@ def _export_via_server(pptx_path, png_path, server_url):
         f.write(response.content)
 
 
-def export_pptx_to_png(pptx_path, png_path, server_url=None, long_edge_px=None):
+def export_pptx_to_png(pptx_path, png_path, server_url=None, long_edge_px=None, skip_com=False):
     """Export the first slide to PNG.
 
     Priority:
       1. Conversion server (if server_url provided)
-      2. Local PowerPoint COM (Windows only)
+      2. Local PowerPoint COM (Windows only, unless skip_com=True)
       3. LibreOffice (if installed locally)
     """
     errors = []
@@ -209,18 +248,21 @@ def export_pptx_to_png(pptx_path, png_path, server_url=None, long_edge_px=None):
     if server_url:
         try:
             _export_via_server(pptx_path, png_path, server_url)
+            logger.info("PNG 변환 완료 [method=server url=%s]", server_url)
             return
         except Exception as e:
             errors.append(f"서버 변환 실패: {e}")
 
-    if sys.platform == "win32":
+    if sys.platform == "win32" and not skip_com:
         try:
             _export_via_com(pptx_path, png_path, long_edge_px=long_edge_px)
+            logger.info("PNG 변환 완료 [method=PowerPoint COM]")
             return
         except Exception as e:
             errors.append(f"로컬 PowerPoint 변환 실패: {e}")
 
     if _export_via_libreoffice(pptx_path, png_path):
+        logger.info("PNG 변환 완료 [method=LibreOffice]")
         return
 
     errors.append("LibreOffice를 찾을 수 없거나 PNG 변환에 실패했습니다.")
@@ -235,14 +277,14 @@ def export_pptx_to_png(pptx_path, png_path, server_url=None, long_edge_px=None):
     )
 
 
-def build_songlist_card(template_path, song_titles, output_png_path, server_url=None):
+def build_songlist_card(template_path, song_titles, output_png_path, server_url=None, skip_com=False):
     """Build the songlist card and export it as PNG. Returns the ISO week number used."""
     with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
         week_num = build_songlist_pptx(template_path, song_titles, tmp_path)
-        export_pptx_to_png(tmp_path, output_png_path, server_url=server_url)
+        export_pptx_to_png(tmp_path, output_png_path, server_url=server_url, skip_com=skip_com)
     finally:
         try:
             os.remove(tmp_path)

@@ -11,6 +11,7 @@ PNG 변환에는 Windows + Microsoft PowerPoint 또는 LibreOffice가 필요합�
 import asyncio
 import datetime
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -33,6 +34,8 @@ from ppt_service import (
     build_songlist_card_png,
 )
 from powerpoint_com import create_powerpoint_application, open_presentation_hidden
+
+logger = logging.getLogger("ppt_gen.server")
 
 PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 TEMPLATE_SYNC_INTERVAL_SECONDS = 10 * 60
@@ -136,13 +139,13 @@ async def _template_sync_loop() -> None:
             loop = asyncio.get_event_loop()
             added = await loop.run_in_executor(_template_executor, _sync_templates_once)
             if added:
-                print(f"[template-sync] 새 템플릿 {len(added)}개 다운로드: {', '.join(added)}")
+                logger.info("[template-sync] 새 템플릿 %d개 다운로드: %s", len(added), ', '.join(added))
             else:
-                print("[template-sync] 새 템플릿 없음")
+                logger.debug("[template-sync] 새 템플릿 없음")
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            print(f"[template-sync] 템플릿 확인 실패: {e}")
+            logger.warning("[template-sync] 템플릿 확인 실패: %s", e)
 
         await asyncio.sleep(TEMPLATE_SYNC_INTERVAL_SECONDS)
 
@@ -254,9 +257,9 @@ async def client_error_report(request: Request):
 
     report = _sanitize_report(data, request)
     file_path = _save_error_report(report)
-    print(
-        "[client-error-report] "
-        f"context={report.get('context')} message={report.get('message')} saved={file_path}"
+    logger.info(
+        "[client-error-report] context=%s message=%s saved=%s",
+        report.get('context'), report.get('message'), file_path,
     )
     return {"status": "ok"}
 
@@ -288,6 +291,7 @@ async def convert(file: UploadFile = File(...)):
         with open(png_path, "rb") as f:
             png_data = f.read()
 
+    logger.info("[convert] 완료 method=PowerPoint COM")
     return Response(content=png_data, media_type="image/png")
 
 
@@ -348,6 +352,11 @@ async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...
         with open(output_path, "rb") as f:
             pptx_data = f.read()
 
+    logger.info(
+        "[generate-ppt] 완료 method=python-pptx songs=%d skipped=%d",
+        result["appended_count"],
+        len(result.get("skipped_titles", [])),
+    )
     return Response(
         content=pptx_data,
         media_type=PPTX_MEDIA_TYPE,
@@ -398,6 +407,11 @@ async def songlist_card(payload: str = Form(...), template: UploadFile = File(..
         with open(png_path, "rb") as f:
             png_data = f.read()
 
+    logger.info(
+        "[songlist-card] 완료 week=%d songs=%d",
+        week_num,
+        len(song_titles),
+    )
     return Response(
         content=png_data,
         media_type="image/png",

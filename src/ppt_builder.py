@@ -2,6 +2,8 @@ import re
 
 from pptx.util import Pt
 
+_MIN_SHORT_LINE_LEN = 6
+
 
 def parse_lyrics_text(raw_text):
     lyrics_dict = {}
@@ -13,7 +15,7 @@ def parse_lyrics_text(raw_text):
             continue
 
         part_key = lines[0].strip()
-        lyrics_content = '\n'.join([line.strip() for line in lines[1:]])
+        lyrics_content = '\n'.join(line.strip() for line in lines[1:])
         lyrics_dict[part_key] = lyrics_content
 
     return lyrics_dict
@@ -28,13 +30,11 @@ def chunk_text(text, max_lines=2):
         return []
     lines = [line.strip() for line in text.split('\n') if line.strip()]
 
-    MIN_LINE_THRESHOLD = 6
-
     chunks = []
     i = 0
     while i < len(lines):
         take_lines = max_lines
-        if max_lines == 1 and len(lines[i]) <= MIN_LINE_THRESHOLD and i + 1 < len(lines):
+        if max_lines == 1 and len(lines[i]) <= _MIN_SHORT_LINE_LEN and i + 1 < len(lines):
             take_lines = 2
 
         chunk_lines = lines[i:i + take_lines]
