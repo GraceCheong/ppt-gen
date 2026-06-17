@@ -4,5 +4,6 @@ customtkinter
 gdown
 pillow
 pyinstaller
+pymupdf
 python-pptx
 requests

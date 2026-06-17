@@ -24,3 +24,9 @@ out/
 Release/
 *.zip
 .claude
+
+# Local/agent-only artifacts (never commit)
+out/_agent/
+out/ui_capture_*.png
+_ft_temp/
+scripts/run-server.bat

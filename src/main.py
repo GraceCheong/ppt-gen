@@ -1,8 +1,10 @@
 import os
+import json
 import subprocess
 import sys
 import threading
 import tempfile
+import datetime
 import tkinter as tk
 import tkinter.font as tkfont
 import hashlib
@@ -21,6 +23,8 @@ from ppt_builder import parse_sequence_text
 from ppt_server_client import (
     PptServerResponseError,
     PptServerUnavailable,
+    download_history_db_via_server,
+    fetch_weekly_history_via_server,
     generate_pptx_via_server,
     generate_songlist_card_via_server,
 )
@@ -29,7 +33,7 @@ from ppt_service import (
     build_integrated_pptx_with_local_office,
     build_songlist_card_png,
 )
-from songlist_builder import export_pptx_to_png
+from songlist_builder import build_songlist_card, export_pptx_to_png
 from error_reporter import format_exception, report_error_async
 from constants import *
 
@@ -223,10 +227,16 @@ class LyricsApp(ctk.CTk):
         self._template_preview_rendering = set()
         self._template_preview_failed = set()
         self._recent_log_lines = []
+        self.weekly_history_items = []
+        self._weekly_history_buttons = []
+        self._weekly_history_expanded = {}
         self.brand_font_family = self.resolve_font_family(BRAND_FONT_CANDIDATES)
         self.install_error_reporting_hooks()
         self.setup_style()
         self.create_widgets()
+        self.load_local_weekly_history()
+        self.render_weekly_history_accordion()
+        self.after(500, self.sync_weekly_history_from_server_async)
         self.refresh_template_options()
         self.after(300, self.ensure_templates_async)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -953,6 +963,42 @@ class LyricsApp(ctk.CTk):
             font=("Segoe UI", 11),
         ).grid(row=1, column=6, sticky=tk.E, padx=(4, 6), pady=4)
 
+        ctk.CTkLabel(
+            settings_frame,
+            text="가사 불러오기",
+            text_color=TEXT_FG,
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=2, column=4, sticky=tk.E, pady=4)
+
+        ctk.CTkButton(
+            settings_frame,
+            text="↻",
+            command=self.reset_loaded_history,
+            width=34,
+            height=34,
+            corner_radius=17,
+            fg_color="transparent",
+            bg_color="transparent",
+            hover_color=ACCENT_SOFT,
+            text_color=TEXT_FG,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            font=("Segoe UI", 14, "bold"),
+        ).grid(row=2, column=5, sticky=tk.E, padx=(8, 6), pady=4)
+
+        self.weekly_history_scroll = ctk.CTkScrollableFrame(
+            settings_frame,
+            width=190,
+            height=120,
+            fg_color=PANEL_SOFT_BG,
+            bg_color="transparent",
+            corner_radius=12,
+            scrollbar_button_color=ACCENT,
+            scrollbar_button_hover_color=ACCENT_DARK,
+        )
+        self.weekly_history_scroll.grid(row=2, column=6, columnspan=2, sticky="ew", padx=(0, 0), pady=(4, 2))
+        self.weekly_history_scroll.columnconfigure(0, weight=1)
+
         # --- Workspace ---
         workspace_frame = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
         workspace_frame.grid(row=1, column=0, sticky="nsew", padx=28, pady=(0, 8))
@@ -1255,6 +1301,111 @@ class LyricsApp(ctk.CTk):
         os.makedirs(output_dir, exist_ok=True)
         return output_dir
 
+    def get_history_cache_file(self):
+        return os.path.join(self.get_output_dir(), WEEKLY_HISTORY_CACHE_FILE_NAME)
+
+    def get_history_db_file(self):
+        return os.path.join(self.get_output_dir(), WEEKLY_HISTORY_DB_FILE_NAME)
+
+    def load_local_weekly_history(self):
+        cache_file = self.get_history_cache_file()
+        if not os.path.exists(cache_file):
+            self.weekly_history_items = []
+            return
+
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                self.weekly_history_items = data
+            else:
+                self.weekly_history_items = []
+        except Exception as e:
+            self.weekly_history_items = []
+            self.report_exception("weekly history load", e, extra={"cache_file": cache_file})
+
+    def save_local_weekly_history(self, items):
+        cache_file = self.get_history_cache_file()
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+
+    def sync_weekly_history_from_server(self, log_result=False):
+        server_url = self.get_server_url()
+        items = fetch_weekly_history_via_server(server_url, year_from=2026)
+        self.save_local_weekly_history(items)
+        self.weekly_history_items = items
+
+        db_file = self.get_history_db_file()
+        download_history_db_via_server(server_url, db_file)
+
+        if log_result:
+            self.log(f"[완료] 주간 작업 이력 {len(items)}개를 서버에서 동기화했습니다.")
+
+    def sync_weekly_history_from_server_async(self):
+        def run():
+            error = None
+            try:
+                self.sync_weekly_history_from_server(log_result=False)
+            except Exception as e:
+                error = e
+
+            def on_done():
+                self.render_weekly_history_accordion()
+                if error is not None:
+                    self.report_exception("weekly history auto sync", error)
+
+            self.after(0, on_done)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _sequence_text_from_entries(self, sequence_entries):
+        lines = []
+        for entry in sequence_entries:
+            if not isinstance(entry, dict):
+                continue
+            title = str(entry.get("title", "")).strip()
+            sequence = str(entry.get("sequence", "")).strip()
+            if not title or not sequence:
+                continue
+            lines.append(title)
+            lines.append(sequence)
+        return "\n".join(lines).strip()
+
+    def apply_weekly_history_item(self, item):
+        sequence_entries = item.get("sequence_entries") if isinstance(item, dict) else None
+        lyrics_by_title = item.get("lyrics_by_title") if isinstance(item, dict) else None
+        if not isinstance(sequence_entries, list) or not isinstance(lyrics_by_title, dict):
+            messagebox.showerror("오류", "선택한 주간 작업 이력 형식이 올바르지 않습니다.")
+            return
+
+        sequence_text = self._sequence_text_from_entries(sequence_entries)
+        if not sequence_text:
+            messagebox.showwarning("가사 불러오기", "선택한 주간 작업 이력에 레파토리가 없습니다.")
+            return
+
+        self.sequence_text.configure(state="normal")
+        self.sequence_text.delete("1.0", "end")
+        self.sequence_text.insert("1.0", sequence_text)
+        self.sequence_placeholder_visible = False
+
+        self.lyrics_store = {str(k): str(v) for k, v in lyrics_by_title.items()}
+        self.refresh_song_list(show_message=False, trigger_download=False)
+
+        week_start = item.get("week_start_date", "?")
+        week_end = item.get("week_end_date", "?")
+        self.log(f"[완료] 주간 작업 이력을 불러왔습니다: {week_start} ~ {week_end}")
+
+    def reset_loaded_history(self):
+        self.sequence_text.configure(state="normal")
+        self.show_sequence_guide()
+        self.sequence_entries = []
+        self.lyrics_store = {}
+        self.current_song_title = None
+        self.current_song_var.set("곡을 선택하세요")
+        self.populate_song_list([], preserve_current=False)
+        self.show_lyrics_guide()
+        self.log("[안내] 불러온 작업 내용을 초기화했습니다.")
+
     def get_server_url(self):
         return self.server_url_var.get().strip() or DEFAULT_SERVER_URL
 
@@ -1439,6 +1590,117 @@ class LyricsApp(ctk.CTk):
         self.suppress_song_select = False
         return selected_index
 
+    def render_weekly_history_accordion(self):
+        if not hasattr(self, "weekly_history_scroll"):
+            return
+
+        for child in self.weekly_history_scroll.winfo_children():
+            child.destroy()
+        self._weekly_history_buttons = []
+
+        items = self.weekly_history_items or []
+        if not items:
+            ctk.CTkLabel(
+                self.weekly_history_scroll,
+                text="저장된 주간 작업 이력이 없습니다.",
+                text_color=MUTED_FG,
+                font=("맑은 고딕", 11),
+                anchor="w",
+                justify=tk.LEFT,
+            ).grid(row=0, column=0, sticky="ew", padx=8, pady=6)
+            return
+
+        row_index = 0
+        for item in items:
+            week_start = str(item.get("week_start_date", "?"))
+            week_end = str(item.get("week_end_date", "?"))
+            sequence_entries = item.get("sequence_entries") if isinstance(item, dict) else []
+            song_count = len(sequence_entries) if isinstance(sequence_entries, list) else 0
+            item_key = f"{week_start}~{week_end}"
+            is_expanded = bool(self._weekly_history_expanded.get(item_key, False))
+
+            section = ctk.CTkFrame(
+                self.weekly_history_scroll,
+                fg_color=TEXT_BG,
+                bg_color="transparent",
+                corner_radius=10,
+                border_width=1,
+                border_color=PANEL_BORDER,
+            )
+            section.grid(row=row_index, column=0, sticky="ew", padx=6, pady=(0, 8))
+            section.columnconfigure(0, weight=1)
+
+            header_btn = ctk.CTkButton(
+                section,
+                text="",
+                command=None,
+                anchor="w",
+                height=32,
+                corner_radius=8,
+                fg_color="transparent",
+                hover_color=ACCENT_SOFT,
+                text_color=TEXT_FG,
+                border_width=0,
+                font=("Segoe UI", 11, "bold"),
+            )
+            header_btn.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
+
+            body_frame = ctk.CTkFrame(
+                section,
+                fg_color="transparent",
+                bg_color="transparent",
+                corner_radius=0,
+            )
+            body_frame.columnconfigure(0, weight=1)
+
+            ctk.CTkLabel(
+                body_frame,
+                text=f"레파토리 {song_count}곡",
+                text_color=MUTED_FG,
+                font=("맑은 고딕", 10),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=10, pady=(0, 6))
+
+            load_btn = ctk.CTkButton(
+                body_frame,
+                text="이 주 작업 불러오기",
+                command=lambda data=item: self.apply_weekly_history_item(data),
+                height=30,
+                corner_radius=8,
+                fg_color=ACCENT_SOFT,
+                hover_color=ACCENT,
+                text_color=TEXT_FG,
+                border_width=1,
+                border_color=PANEL_BORDER,
+                font=("맑은 고딕", 10, "bold"),
+            )
+            load_btn.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
+            self._weekly_history_buttons.append(load_btn)
+
+            def _refresh_section(
+                expanded,
+                key=item_key,
+                header=header_btn,
+                body=body_frame,
+                ws=week_start,
+                we=week_end,
+            ):
+                self._weekly_history_expanded[key] = expanded
+                arrow = "▾" if expanded else "▸"
+                header.configure(text=f"{arrow} {ws} ~ {we}")
+                if expanded:
+                    body.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 2))
+                else:
+                    body.grid_forget()
+
+            def _toggle_section(key=item_key):
+                _refresh_section(not bool(self._weekly_history_expanded.get(key, False)), key=key)
+
+            header_btn.configure(command=_toggle_section)
+            _refresh_section(is_expanded)
+
+            row_index += 1
+
     def restore_song_selection(self):
         self.suppress_song_select = True
         target_index = None
@@ -1489,6 +1751,12 @@ class LyricsApp(ctk.CTk):
             self.show_lyrics_guide()
 
     def on_close(self):
+        try:
+            self.sync_weekly_history_from_server(log_result=False)
+            self.render_weekly_history_accordion()
+        except Exception as e:
+            self.report_exception("weekly history sync on close", e)
+            self.log(f"[경고] 종료 시 주간 작업 이력 동기화에 실패했습니다: {e}")
         self.destroy()
 
     def generate_songlist_card(self):
@@ -1566,7 +1834,7 @@ class LyricsApp(ctk.CTk):
                     )
                     self.after(0, lambda: self.log("[정보][송리스트][로컬변환] 로컬 변환을 시작합니다."))
                     self.after(0, lambda: self.update_busy_dialog("서버 연결이 되지 않아 로컬에서 변환하고 있습니다."))
-                    week_num = build_songlist_card_png(template_file, song_titles, temp_output_file)
+                    week_num = build_songlist_card(template_file, song_titles, temp_output_file)
                     raise_if_cancelled()
                 except PptServerResponseError as e:
                     raise_if_cancelled()
@@ -1585,7 +1853,7 @@ class LyricsApp(ctk.CTk):
                         )
                         self.after(0, lambda: self.log("[정보][송리스트][로컬변환] 로컬 변환을 시작합니다."))
                         self.after(0, lambda: self.update_busy_dialog("서버 처리 오류로 로컬에서 변환하고 있습니다."))
-                        week_num = build_songlist_card_png(template_file, song_titles, temp_output_file)
+                        week_num = build_songlist_card(template_file, song_titles, temp_output_file)
                         raise_if_cancelled()
                     else:
                         raise

@@ -7,7 +7,7 @@ import tempfile
 from pptx import Presentation
 
 from ppt_builder import append_closing_slide, append_lyrics_to_ppt, reset_integrated_ppt
-from powerpoint_com import create_powerpoint_application, open_presentation_hidden
+from powerpoint_com import create_powerpoint_application, open_presentation_hidden, quit_powerpoint
 from songlist_builder import build_songlist_card, find_libreoffice
 
 
@@ -92,7 +92,7 @@ def _save_pptx_via_powerpoint_com(source_pptx_path, output_pptx_path):
             finally:
                 prs_com.Close()
         finally:
-            powerpoint.Quit()
+            quit_powerpoint(powerpoint)
     finally:
         comtypes.CoUninitialize()
 
@@ -100,6 +100,34 @@ def _save_pptx_via_powerpoint_com(source_pptx_path, output_pptx_path):
         raise RuntimeError("PowerPoint COM 저장 결과 파일을 찾을 수 없습니다.")
     os.replace(temp_output, output_abs)
 
+
+def _lo_user_install_arg():
+    """Return --env:UserInstallation arg pointing to a service-accessible profile dir.
+
+    When running as a Windows Service (SYSTEM account), the default LibreOffice
+    user profile path is not writable, so LibreOffice cannot build a font cache
+    and silently falls back to built-in fonts even when the font is installed
+    system-wide.  Pointing to a ProgramData path fixes this.
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+        profile_dir = os.path.join(base, "ppt-gen", "lo-profile")
+    else:
+        profile_dir = os.path.join(os.path.expanduser("~"), ".config", "ppt-gen", "lo-profile")
+    os.makedirs(profile_dir, exist_ok=True)
+    uri = "file:///" + profile_dir.replace("\\", "/")
+    return f"-env:UserInstallation={uri}"
+
+def _lo_subprocess_kwargs():
+    """subprocess.run에 전달할 공통 kwargs.
+
+    Windows에서 CREATE_NO_WINDOW 플래그를 설정해 LibreOffice가 콘솔 창을
+    상속받지 않도록 한다.  stdin=DEVNULL로 'Press Enter' 프롬프트를 차단한다.
+    """
+    kwargs = {"stdin": subprocess.DEVNULL, "capture_output": True}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return kwargs
 
 def _save_pptx_via_libreoffice(source_pptx_path, output_pptx_path):
     lo = find_libreoffice()
@@ -115,9 +143,9 @@ def _save_pptx_via_libreoffice(source_pptx_path, output_pptx_path):
         temp_source = os.path.join(tmp, "source.pptx")
         shutil.copyfile(source_abs, temp_source)
         result = subprocess.run(
-            [lo, "--headless", "--convert-to", "pptx", "--outdir", output_dir, temp_source],
-            capture_output=True,
+            [lo, "--headless", _lo_user_install_arg(), "--convert-to", "pptx", "--outdir", output_dir, temp_source],
             timeout=90,
+            **_lo_subprocess_kwargs(),
         )
         if result.returncode != 0:
             return False
@@ -181,7 +209,7 @@ def build_songlist_card_png(template_path, song_titles, output_png_path):
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
     try:
-        return build_songlist_card(template_path, song_titles, output_png_path, skip_com=True)
+        return build_songlist_card(template_path, song_titles, output_png_path)
     except Exception as e:
         raise LocalOfficeUnavailable(
             "로컬에서 송리스트 카드 PNG를 생성할 수 없습니다.\n"

@@ -13,6 +13,7 @@ import datetime
 import json
 import logging
 import os
+import sqlite3
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +49,138 @@ app = FastAPI(title="PO,RR PPT Server", version="1.1.0")
 _executor = ThreadPoolExecutor(max_workers=1)
 _template_executor = ThreadPoolExecutor(max_workers=1)
 _template_sync_task: asyncio.Task | None = None
+_songlist_template_lock = asyncio.Lock()
+
+
+def _history_db_path() -> str:
+    history_dir = os.path.join(ROOT_DIR, "out", "history")
+    os.makedirs(history_dir, exist_ok=True)
+    return os.path.join(history_dir, "weekly_repertoire.db")
+
+
+def _init_history_db() -> None:
+    db_path = _history_db_path()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_repertoire (
+                week_end_date TEXT PRIMARY KEY,
+                week_start_date TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL,
+                sequence_entries_json TEXT NOT NULL,
+                lyrics_by_title_json TEXT NOT NULL,
+                max_lines_per_slide INTEGER,
+                max_chars_per_line INTEGER,
+                lyrics_font_size TEXT
+            )
+            """
+        )
+        conn.commit()
+
+
+def _week_end_saturday(source_date: datetime.date) -> datetime.date:
+    # Monday=0 ... Saturday=5 ... Sunday=6
+    days_until_saturday = (5 - source_date.weekday()) % 7
+    return source_date + datetime.timedelta(days=days_until_saturday)
+
+
+def _save_weekly_repertoire_snapshot(
+    sequence_entries: list[tuple[str, str]],
+    lyrics_by_title: dict,
+    max_lines_per_slide: int,
+    max_chars_per_line: int,
+    lyrics_font_size,
+) -> str:
+    today = datetime.date.today()
+    week_end = _week_end_saturday(today)
+    week_start = week_end - datetime.timedelta(days=6)
+    updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    db_path = _history_db_path()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO weekly_repertoire (
+                week_end_date,
+                week_start_date,
+                updated_at_utc,
+                sequence_entries_json,
+                lyrics_by_title_json,
+                max_lines_per_slide,
+                max_chars_per_line,
+                lyrics_font_size
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(week_end_date) DO UPDATE SET
+                week_start_date=excluded.week_start_date,
+                updated_at_utc=excluded.updated_at_utc,
+                sequence_entries_json=excluded.sequence_entries_json,
+                lyrics_by_title_json=excluded.lyrics_by_title_json,
+                max_lines_per_slide=excluded.max_lines_per_slide,
+                max_chars_per_line=excluded.max_chars_per_line,
+                lyrics_font_size=excluded.lyrics_font_size
+            """,
+            (
+                week_end.isoformat(),
+                week_start.isoformat(),
+                updated_at,
+                json.dumps(
+                    [
+                        {"title": title, "sequence": sequence}
+                        for title, sequence in sequence_entries
+                    ],
+                    ensure_ascii=False,
+                ),
+                json.dumps(lyrics_by_title, ensure_ascii=False),
+                int(max_lines_per_slide),
+                int(max_chars_per_line),
+                "" if lyrics_font_size is None else str(lyrics_font_size),
+            ),
+        )
+        conn.commit()
+
+    return week_end.isoformat()
+
+
+def _list_weekly_repertoire(year_from: int = 2026) -> list[dict]:
+    db_path = _history_db_path()
+    min_date = datetime.date(year_from, 1, 1).isoformat()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT
+                week_end_date,
+                week_start_date,
+                updated_at_utc,
+                sequence_entries_json,
+                lyrics_by_title_json,
+                max_lines_per_slide,
+                max_chars_per_line,
+                lyrics_font_size
+            FROM weekly_repertoire
+            WHERE week_end_date >= ?
+            ORDER BY week_end_date DESC
+            """,
+            (min_date,),
+        ).fetchall()
+
+    history = []
+    for row in rows:
+        history.append(
+            {
+                "week_end_date": row["week_end_date"],
+                "week_start_date": row["week_start_date"],
+                "updated_at_utc": row["updated_at_utc"],
+                "sequence_entries": json.loads(row["sequence_entries_json"]),
+                "lyrics_by_title": json.loads(row["lyrics_by_title_json"]),
+                "max_lines_per_slide": row["max_lines_per_slide"],
+                "max_chars_per_line": row["max_chars_per_line"],
+                "lyrics_font_size": row["lyrics_font_size"] or None,
+            }
+        )
+
+    return history
 
 
 def _error_report_dir() -> str:
@@ -105,6 +238,10 @@ def _server_template_files() -> set[str]:
     return result
 
 
+def _server_songlist_template_path() -> str:
+    return os.path.join(_server_template_dir(), "songlist_template.pptx")
+
+
 def _sync_templates_once() -> list[str]:
     import gdown
 
@@ -153,6 +290,7 @@ async def _template_sync_loop() -> None:
 @app.on_event("startup")
 async def start_template_sync() -> None:
     global _template_sync_task
+    _init_history_db()
     if _template_sync_task is None or _template_sync_task.done():
         _template_sync_task = asyncio.create_task(_template_sync_loop())
 
@@ -204,6 +342,22 @@ async def _save_upload(upload: UploadFile, path: str) -> None:
         f.write(data)
 
 
+async def _save_upload_atomic(upload: UploadFile, path: str) -> None:
+    data = await upload.read()
+    if not data:
+        raise HTTPException(400, detail="업로드된 파일이 비어 있습니다.")
+
+    target_abs = os.path.abspath(path)
+    target_dir = os.path.dirname(target_abs)
+    os.makedirs(target_dir, exist_ok=True)
+    temp_path = target_abs + ".tmp"
+
+    with open(temp_path, "wb") as f:
+        f.write(data)
+
+    os.replace(temp_path, target_abs)
+
+
 def _load_payload(payload: str) -> dict:
     try:
         data = json.loads(payload)
@@ -243,6 +397,33 @@ def health():
         "comtypes": com_available,
         "generator": GENERATOR_VERSION,
     }
+
+
+@app.get("/history/weekly")
+def get_weekly_history(year_from: int = 2026):
+    try:
+        if year_from < 1900:
+            year_from = 1900
+        return {
+            "items": _list_weekly_repertoire(year_from=year_from),
+            "year_from": year_from,
+        }
+    except Exception as e:
+        raise HTTPException(500, detail=f"주간 이력 조회 실패: {e}")
+
+
+@app.get("/history/db", response_class=Response)
+def download_history_db():
+    db_path = _history_db_path()
+    if not os.path.exists(db_path):
+        _init_history_db()
+    with open(db_path, "rb") as f:
+        data = f.read()
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="weekly_repertoire.db"'},
+    )
 
 
 @app.post("/client-error-report")
@@ -357,6 +538,18 @@ async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...
         result["appended_count"],
         len(result.get("skipped_titles", [])),
     )
+    try:
+        saved_week = _save_weekly_repertoire_snapshot(
+            sequence_entries=sequence_entries,
+            lyrics_by_title=lyrics_by_title,
+            max_lines_per_slide=max_lines_per_slide,
+            max_chars_per_line=max_chars_per_line,
+            lyrics_font_size=lyrics_font_size,
+        )
+        logger.info("[history] 주간 이력 저장 완료 week_end=%s", saved_week)
+    except Exception as e:
+        logger.warning("[history] 주간 이력 저장 실패: %s", e)
+
     return Response(
         content=pptx_data,
         media_type=PPTX_MEDIA_TYPE,
@@ -382,30 +575,32 @@ async def songlist_card(payload: str = Form(...), template: UploadFile = File(..
     if not song_titles:
         raise HTTPException(400, detail="song_titles가 비어 있습니다.")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        template_path = os.path.join(tmp, "songlist_template.pptx")
-        png_path = os.path.join(tmp, "songlist_card.png")
-        await _save_upload(template, template_path)
+    template_path = _server_songlist_template_path()
+    async with _songlist_template_lock:
+        await _save_upload_atomic(template, template_path)
 
-        try:
-            loop = asyncio.get_event_loop()
-            week_num = await loop.run_in_executor(
-                _executor,
-                build_songlist_card_png,
-                template_path,
-                song_titles,
-                png_path,
-            )
-        except LocalOfficeUnavailable as e:
-            raise HTTPException(503, detail=f"송리스트 카드 생성 실패(로컬 오피스 사용 불가): {e}")
-        except Exception as e:
-            raise HTTPException(500, detail=f"송리스트 카드 생성 실패: {e}")
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = os.path.join(tmp, "songlist_card.png")
 
-        if not os.path.exists(png_path):
-            raise HTTPException(500, detail="PNG 출력 파일을 찾을 수 없습니다.")
+            try:
+                loop = asyncio.get_event_loop()
+                week_num = await loop.run_in_executor(
+                    _executor,
+                    build_songlist_card_png,
+                    template_path,
+                    song_titles,
+                    output_path,
+                )
+            except LocalOfficeUnavailable as e:
+                raise HTTPException(503, detail=f"송리스트 카드 생성 실패(로컬 오피스 사용 불가): {e}")
+            except Exception as e:
+                raise HTTPException(500, detail=f"송리스트 카드 생성 실패: {e}")
 
-        with open(png_path, "rb") as f:
-            png_data = f.read()
+            if not os.path.exists(output_path):
+                raise HTTPException(500, detail="PNG 출력 파일을 찾을 수 없습니다.")
+
+            with open(output_path, "rb") as f:
+                output_data = f.read()
 
     logger.info(
         "[songlist-card] 완료 week=%d songs=%d",
@@ -413,7 +608,7 @@ async def songlist_card(payload: str = Form(...), template: UploadFile = File(..
         len(song_titles),
     )
     return Response(
-        content=png_data,
+        content=output_data,
         media_type="image/png",
         headers={"X-Week-Number": str(week_num)},
     )

@@ -1,3 +1,5 @@
+import sys
+
 PP_WINDOW_MINIMIZED = 2
 
 
@@ -7,6 +9,38 @@ def _try_setattr(target, name, value):
         return True
     except Exception:
         return False
+
+
+def quit_powerpoint(powerpoint):
+    """Call Quit() and, on Windows, forcibly kill any surviving POWERPNT.EXE process.
+
+    powerpoint.Quit() is a fire-and-forget COM call that sometimes leaves the
+    process alive (e.g. when a dialog is pending or Quit itself raises).
+    Killing the process by PID ensures no zombie instances accumulate between
+    requests, which is the primary cause of E_OUTOFMEMORY on subsequent calls.
+    """
+    pid = None
+    if sys.platform == "win32":
+        try:
+            pid = powerpoint.ProcessID
+        except Exception:
+            pass
+
+    try:
+        powerpoint.Quit()
+    except Exception:
+        pass
+
+    if pid and sys.platform == "win32":
+        try:
+            import subprocess
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/F"],
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:
+            pass
 
 
 def minimize_powerpoint_window(powerpoint):

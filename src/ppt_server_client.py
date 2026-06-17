@@ -139,6 +139,12 @@ def generate_songlist_card_via_server(
     if response is None:
         raise last_error or PptServerUnavailable("송리스트 카드 요청에 실패했습니다.")
 
+    content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if content_type != "image/png":
+        raise PptServerUnavailable(
+            f"endpoint=/songlist-card, 예상하지 못한 응답 형식입니다: {content_type or 'missing'}"
+        )
+
     output_dir = os.path.dirname(os.path.abspath(output_png_path))
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -148,3 +154,48 @@ def generate_songlist_card_via_server(
 
     week_num = response.headers.get("X-Week-Number")
     return int(week_num) if week_num and week_num.isdigit() else None
+
+
+def fetch_weekly_history_via_server(server_url, year_from=2026, timeout=15):
+    url = server_url.rstrip("/") + "/history/weekly"
+    try:
+        response = requests.get(url, params={"year_from": int(year_from)}, timeout=(2, timeout))
+    except requests.RequestException as exc:
+        raise PptServerUnavailable(f"endpoint=/history/weekly, 네트워크 오류: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise PptServerResponseError(
+            f"endpoint=/history/weekly, 서버 오류 {response.status_code}: {_response_detail(response)}",
+            status_code=response.status_code,
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise PptServerUnavailable("endpoint=/history/weekly, JSON 응답을 해석할 수 없습니다.") from exc
+
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise PptServerUnavailable("endpoint=/history/weekly, items 형식이 올바르지 않습니다.")
+    return items
+
+
+def download_history_db_via_server(server_url, output_db_path, timeout=20):
+    url = server_url.rstrip("/") + "/history/db"
+    try:
+        response = requests.get(url, timeout=(2, timeout))
+    except requests.RequestException as exc:
+        raise PptServerUnavailable(f"endpoint=/history/db, 네트워크 오류: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise PptServerResponseError(
+            f"endpoint=/history/db, 서버 오류 {response.status_code}: {_response_detail(response)}",
+            status_code=response.status_code,
+        )
+
+    output_dir = os.path.dirname(os.path.abspath(output_db_path))
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    with open(output_db_path, "wb") as output_file:
+        output_file.write(response.content)
