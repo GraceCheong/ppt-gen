@@ -35,7 +35,7 @@ else:
 
 
 def project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def find_release_dirs(release_dir: Path) -> list[tuple[int, Path]]:

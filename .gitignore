@@ -13,6 +13,7 @@ build/
 dist/
 *.spec
 !LyricsToPPT.spec
+!tools/release/LyricsToPPT.spec
 
 # Python cache
 __pycache__/
@@ -21,7 +22,7 @@ __pycache__/
 
 # Generated app output and release archives
 out/
-Release/
+/Release/
 *.zip
 .claude
 
@@ -29,4 +30,4 @@ Release/
 out/_agent/
 out/ui_capture_*.png
 _ft_temp/
-scripts/run-server.bat
+tools/agent/

@@ -5,7 +5,7 @@
 | 항목 | 값 |
 |------|-----|
 | Task 이름 | `PPTGenServer` |
-| 실행 파일 | `scripts/run-server.bat` |
+| 실행 파일 | `tools/server/run-server.bat` |
 | 포트 | `8010` |
 | 로그 | `logs/service.log` |
 | 시작 방식 | 부팅 시 자동 시작 (SYSTEM 계정) |
@@ -22,7 +22,7 @@
 
 ```powershell
 $action   = New-ScheduledTaskAction -Execute "C:\Windows\System32\cmd.exe" `
-                -Argument "/c C:\dev\ppt-gen\scripts\run-server.bat" `
+                -Argument "/c C:\dev\ppt-gen\tools\server\run-server.bat" `
                 -WorkingDirectory "C:\dev\ppt-gen"
 $trigger  = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1)
@@ -86,7 +86,7 @@ Unregister-ScheduledTask -TaskName "PPTGenServer" -Confirm:$false
 Get-Content C:\dev\ppt-gen\logs\service.log -Tail 100
 
 # 배치 파일 직접 실행해서 에러 확인
-C:\dev\ppt-gen\scripts\run-server.bat
+C:\dev\ppt-gen\tools\server\run-server.bat
 ```
 
 ### 포트 충돌 확인
