@@ -31,3 +31,6 @@ out/_agent/
 out/ui_capture_*.png
 _ft_temp/
 tools/agent/
+
+.venv/
+venv310/

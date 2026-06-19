@@ -61,6 +61,24 @@ def blend_hex(start_color, end_color, ratio):
     )
 
 
+def _setup_undo(textbox: ctk.CTkTextbox):
+    inner = textbox._textbox
+    inner.configure(undo=True, maxundo=-1)
+    inner.bind("<Control-z>", lambda e: (_safe_edit(inner, "undo"), "break")[1])
+    inner.bind("<Control-Z>", lambda e: (_safe_edit(inner, "redo"), "break")[1])
+    inner.bind("<Control-y>", lambda e: (_safe_edit(inner, "redo"), "break")[1])
+
+
+def _safe_edit(widget, action):
+    try:
+        if action == "undo":
+            widget.edit_undo()
+        else:
+            widget.edit_redo()
+    except tk.TclError:
+        pass
+
+
 class MultilineDialog(ctk.CTkToplevel):
     def __init__(self, parent, title, prompt, initial_text=""):
         super().__init__(parent)
@@ -93,6 +111,7 @@ class MultilineDialog(ctk.CTkToplevel):
             font=("맑은 고딕", 10),
         )
         self.text_area.grid(row=1, column=0, sticky=tk.NSEW)
+        _setup_undo(self.text_area)
         if initial_text:
             self.text_area.insert("1.0", initial_text)
 
@@ -334,6 +353,7 @@ class LyricsSearchDialog(ctk.CTkToplevel):
         self.destroy()
 
 
+class BusyDialog(ctk.CTkToplevel):
     def __init__(self, parent, title, message, on_cancel=None):
         super().__init__(parent)
         self._on_cancel = on_cancel
@@ -1184,80 +1204,6 @@ class LyricsApp(ctk.CTk):
             font=("Segoe UI", 11),
         ).grid(row=1, column=6, sticky=tk.E, padx=(4, 6), pady=4)
 
-        ctk.CTkLabel(
-            settings_frame,
-            text="DB 이력 불러오기",
-            text_color=TEXT_FG,
-            font=("Segoe UI", 12, "bold"),
-        ).grid(row=2, column=4, sticky=tk.E, pady=4)
-
-        ctk.CTkButton(
-            settings_frame,
-            text="↻",
-            command=self.reset_loaded_history,
-            width=34,
-            height=34,
-            corner_radius=17,
-            fg_color="transparent",
-            bg_color="transparent",
-            hover_color=ACCENT_SOFT,
-            text_color=TEXT_FG,
-            border_width=1,
-            border_color=PANEL_BORDER,
-            font=("Segoe UI", 14, "bold"),
-        ).grid(row=2, column=5, sticky=tk.E, padx=(8, 6), pady=4)
-
-        self.history_load_panel = ctk.CTkFrame(
-            settings_frame,
-            fg_color=PANEL_SOFT_BG,
-            bg_color="transparent",
-            corner_radius=12,
-            border_width=1,
-            border_color=PANEL_BORDER,
-        )
-        self.history_load_panel.grid(row=2, column=6, columnspan=2, sticky="ew", padx=(0, 0), pady=(4, 2))
-        self.history_load_panel.columnconfigure(0, weight=1)
-
-        self.history_search_entry = ctk.CTkEntry(
-            self.history_load_panel,
-            textvariable=self.history_search_var,
-            placeholder_text="주차/기간 검색...",
-            width=190,
-            height=30,
-            corner_radius=10,
-            border_width=1,
-            border_color=PANEL_BORDER,
-            fg_color=TEXT_BG,
-            bg_color="transparent",
-            text_color=TEXT_FG,
-            font=("맑은 고딕", 10),
-        )
-        self.history_search_entry.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
-        self.history_search_entry.bind("<KeyRelease>", self.on_history_search_keyrelease)
-
-        self.history_dropdown = ttk.Combobox(
-            self.history_load_panel,
-            textvariable=self.history_select_var,
-            state="readonly",
-            values=["저장된 DB 이력이 없습니다"],
-        )
-        self.history_dropdown.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
-
-        self.history_load_btn = ctk.CTkButton(
-            self.history_load_panel,
-            text="선택 이력 불러오기",
-            command=self.load_selected_history_item,
-            height=28,
-            corner_radius=8,
-            fg_color=ACCENT_SOFT,
-            hover_color=ACCENT,
-            text_color=TEXT_FG,
-            border_width=1,
-            border_color=PANEL_BORDER,
-            font=("맑은 고딕", 10, "bold"),
-        )
-        self.history_load_btn.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
-
         # --- Workspace ---
         workspace_frame = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
         workspace_frame.grid(row=1, column=0, sticky="nsew", padx=28, pady=(0, 8))
@@ -1421,9 +1367,10 @@ class LyricsApp(ctk.CTk):
         )
         self.lyrics_text.grid(row=1, column=1, sticky="nsew", padx=(0, 18), pady=(0, 18))
         self.lyrics_text.tag_config("placeholder", foreground="#9aa3af")
-        self.lyrics_text.bind("<FocusIn>", self.on_lyrics_focus_in)
-        self.lyrics_text.bind("<FocusOut>", self.on_lyrics_focus_out)
-        self.lyrics_text.bind("<<Modified>>", self.on_lyrics_modified)
+        _setup_undo(self.lyrics_text)
+        self.lyrics_text._textbox.bind("<FocusIn>", self.on_lyrics_focus_in)
+        self.lyrics_text._textbox.bind("<FocusOut>", self.on_lyrics_focus_out)
+        self.lyrics_text._textbox.bind("<<Modified>>", self.on_lyrics_modified)
         self.show_lyrics_guide()
 
         # --- Action bar ---
@@ -2471,6 +2418,7 @@ class LyricsApp(ctk.CTk):
         self.lyrics_text.insert("1.0", LYRICS_GUIDE_TEXT, "placeholder")
         self.lyrics_placeholder_visible = True
         self.lyrics_text.edit_modified(False)
+        self.lyrics_text._textbox.edit_reset()
         self.loading_lyrics = False
 
     def clear_lyrics_guide(self):
@@ -2481,6 +2429,7 @@ class LyricsApp(ctk.CTk):
         self.lyrics_text.delete("1.0", "end")
         self.lyrics_placeholder_visible = False
         self.lyrics_text.edit_modified(False)
+        self.lyrics_text._textbox.edit_reset()
         self.loading_lyrics = False
 
     def set_lyrics_editor_text(self, text):
@@ -2490,6 +2439,7 @@ class LyricsApp(ctk.CTk):
         self.lyrics_text.insert("1.0", text)
         self.lyrics_placeholder_visible = False
         self.lyrics_text.edit_modified(False)
+        self.lyrics_text._textbox.edit_reset()
         self.loading_lyrics = False
 
     def get_lyrics_editor_text(self):
