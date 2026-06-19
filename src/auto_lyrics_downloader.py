@@ -68,18 +68,44 @@ def fetch_lyrics_from_bugs(song_title, log_func=print):
 # 2. Main Execution
 # ==========================================
 
-def download_missing_lyrics(song_titles, existing_lyrics=None, log_func=print, delay_seconds=1.5):
-    """Download lyrics for songs not in existing_lyrics. Returns {title: text} dict."""
+def download_missing_lyrics(
+    song_titles,
+    existing_lyrics=None,
+    log_func=print,
+    delay_seconds=1.5,
+    server_url=None,
+    sequence_map=None,
+):
+    """Download lyrics for songs not in existing_lyrics.
+
+    Lookup order per song:
+    1. existing_lyrics (in-memory)
+    2. server lyrics_catalog (if server_url provided)
+    3. Bugs Music crawling
+    4. On crawl success, save to server catalog
+
+    Returns {title: text} dict of newly acquired lyrics.
+    """
     log_func("====================================")
     log_func("가사 자동 다운로드")
     log_func("====================================")
 
     existing = existing_lyrics or {}
+    sequence_map = sequence_map or {}
     song_titles = [t.strip() for t in song_titles if t.strip()]
 
     if not song_titles:
         log_func("[오류] 다운로드할 곡 제목이 없습니다.")
         return {}
+
+    # Import client lazily to avoid circular imports
+    _server_search = None
+    if server_url:
+        try:
+            from ppt_server_client import lookup_lyrics_by_title, save_lyrics_to_catalog, PptServerUnavailable
+            _server_search = (lookup_lyrics_by_title, save_lyrics_to_catalog, PptServerUnavailable)
+        except Exception:
+            pass
 
     results = {}
     found_missing = False
@@ -90,12 +116,38 @@ def download_missing_lyrics(song_titles, existing_lyrics=None, log_func=print, d
             continue
 
         found_missing = True
+
+        # Step 1: server catalog lookup
+        if _server_search is not None:
+            lookup_fn, save_fn, UnavailableError = _server_search
+            try:
+                catalog_entry = lookup_fn(server_url, song_title)
+                if catalog_entry and str(catalog_entry.get("lyrics", "")).strip():
+                    lyrics_text = catalog_entry["lyrics"]
+                    results[song_title] = lyrics_text
+                    log_func(f"[DB] '{song_title}' 가사를 서버 카탈로그에서 불러왔습니다.")
+                    continue
+            except UnavailableError:
+                pass  # server offline — fall through to crawling
+            except Exception as e:
+                log_func(f"[경고] 서버 카탈로그 조회 중 오류: {e}")
+
+        # Step 2: Bugs crawling
         log_func(f"[확인] '{song_title}' 가사를 다운로드합니다.")
         lyrics_text = fetch_lyrics_from_bugs(song_title, log_func=log_func)
 
         if lyrics_text:
             results[song_title] = lyrics_text
             log_func(f"[완료] '{song_title}' 가사를 가져왔습니다.\n")
+
+            # Step 3: save to server catalog
+            if _server_search is not None:
+                _, save_fn, UnavailableError = _server_search
+                try:
+                    sequence = sequence_map.get(song_title, "")
+                    save_fn(server_url, song_title, lyrics_text, source="bugs", sequence=sequence)
+                except Exception:
+                    pass  # best-effort — don't fail the download
         else:
             log_func(f"[안내] '{song_title}' 가사를 자동으로 찾지 못했습니다. 직접 입력해 주세요.\n")
 
@@ -107,3 +159,4 @@ def download_missing_lyrics(song_titles, existing_lyrics=None, log_func=print, d
         log_func("\n[완료] 가사 다운로드 작업이 끝났습니다. 가사 내용을 확인하세요.")
 
     return results
+

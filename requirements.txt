@@ -6,4 +6,5 @@ pillow
 pyinstaller
 pymupdf
 python-pptx
+pytest
 requests

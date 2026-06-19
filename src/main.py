@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -11,7 +12,7 @@ import hashlib
 import io
 import traceback
 import zipfile
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import customtkinter as ctk
 try:
     from PIL import Image, ImageTk
@@ -21,12 +22,14 @@ except ImportError:
 
 from ppt_builder import parse_sequence_text
 from ppt_server_client import (
+    PptServerEndpointUnavailable,
     PptServerResponseError,
     PptServerUnavailable,
     download_history_db_via_server,
     fetch_weekly_history_via_server,
     generate_pptx_via_server,
     generate_songlist_card_via_server,
+    search_lyrics_catalog,
 )
 from ppt_service import (
     LocalOfficeUnavailable,
@@ -34,7 +37,7 @@ from ppt_service import (
     build_songlist_card_png,
 )
 from songlist_builder import build_songlist_card, export_pptx_to_png
-from error_reporter import format_exception, report_error_async
+from error_reporter import build_error_report, format_exception, report_error_async, send_error_report
 from constants import *
 
 
@@ -59,7 +62,7 @@ def blend_hex(start_color, end_color, ratio):
 
 
 class MultilineDialog(ctk.CTkToplevel):
-    def __init__(self, parent, title, prompt):
+    def __init__(self, parent, title, prompt, initial_text=""):
         super().__init__(parent)
         self.title(title)
         self.geometry("460x380")
@@ -90,6 +93,8 @@ class MultilineDialog(ctk.CTkToplevel):
             font=("맑은 고딕", 10),
         )
         self.text_area.grid(row=1, column=0, sticky=tk.NSEW)
+        if initial_text:
+            self.text_area.insert("1.0", initial_text)
 
         btn_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
         btn_frame.grid(row=2, column=0, sticky=tk.E, pady=(12, 0))
@@ -134,7 +139,201 @@ class MultilineDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-class BusyDialog(ctk.CTkToplevel):
+class LyricsSearchDialog(ctk.CTkToplevel):
+    """가사 카탈로그 검색 다이얼로그.
+
+    선택 시 self.result = {"title": ..., "sequence": ..., "lyrics": ...} 또는 None.
+    """
+
+    _DEBOUNCE_MS = 300
+
+    def __init__(self, parent, server_url: str):
+        super().__init__(parent)
+        self.title("가사 DB 검색")
+        self.geometry("540x460")
+        self.minsize(420, 320)
+        self.resizable(True, True)
+        self.configure(fg_color=APP_BG)
+
+        self._server_url = server_url
+        self._debounce_id = None
+        self._results: list[dict] = []
+        self.result: dict | None = None
+
+        self._build_ui()
+        self.grab_set()
+        self.focus_force()
+        self._search_entry.focus_set()
+        self.wait_window(self)
+
+    def _build_ui(self):
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        # ── Search bar ──────────────────────────────────────────────
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 6))
+        bar.columnconfigure(0, weight=1)
+
+        self._search_var = tk.StringVar()
+        self._search_entry = ctk.CTkEntry(
+            bar,
+            textvariable=self._search_var,
+            placeholder_text="곡명을 입력하세요…",
+            height=36,
+            corner_radius=10,
+            font=("맑은 고딕", 12),
+            fg_color=TEXT_BG,
+            text_color=TEXT_FG,
+            border_color=ACCENT,
+            border_width=1,
+        )
+        self._search_entry.grid(row=0, column=0, sticky="ew")
+        self._search_var.trace_add("write", self._on_query_changed)
+
+        # ── Results list ────────────────────────────────────────────
+        list_frame = ctk.CTkScrollableFrame(
+            self,
+            fg_color=PANEL_SOFT_BG,
+            corner_radius=12,
+            scrollbar_button_color=ACCENT,
+            scrollbar_button_hover_color=ACCENT_DARK,
+        )
+        list_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 8))
+        list_frame.columnconfigure(0, weight=1)
+        self._list_frame = list_frame
+
+        self._status_label = ctk.CTkLabel(
+            list_frame,
+            text="검색어를 입력하면 결과가 표시됩니다.",
+            text_color=MUTED_FG,
+            font=("맑은 고딕", 11),
+            anchor="w",
+        )
+        self._status_label.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+
+        # ── Bottom buttons ───────────────────────────────────────────
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
+        btn_row.columnconfigure(0, weight=1)
+
+        ctk.CTkButton(
+            btn_row,
+            text="닫기",
+            width=80,
+            height=32,
+            corner_radius=8,
+            fg_color="transparent",
+            border_width=1,
+            border_color=ACCENT,
+            hover_color=ACCENT_SOFT,
+            text_color=TEXT_FG,
+            font=("맑은 고딕", 11),
+            command=self.destroy,
+        ).grid(row=0, column=0, sticky="e")
+
+    def _on_query_changed(self, *_):
+        if self._debounce_id is not None:
+            try:
+                self.after_cancel(self._debounce_id)
+            except Exception:
+                pass
+        self._debounce_id = self.after(self._DEBOUNCE_MS, self._do_search)
+
+    def _do_search(self):
+        query = self._search_var.get().strip()
+        if not query:
+            self._show_status("검색어를 입력하면 결과가 표시됩니다.")
+            return
+
+        self._show_status("검색 중…")
+        threading.Thread(target=self._fetch_results, args=(query,), daemon=True).start()
+
+    def _fetch_results(self, query: str):
+        try:
+            items = search_lyrics_catalog(self._server_url, query, limit=20)
+        except (PptServerUnavailable, PptServerEndpointUnavailable):
+            self.after(0, lambda: self._show_status("서버에 연결할 수 없습니다."))
+            return
+        except Exception as e:
+            self.after(0, lambda: self._show_status(f"검색 오류: {e}"))
+            return
+        self.after(0, lambda r=items: self._render_results(r))
+
+    def _show_status(self, msg: str):
+        for child in self._list_frame.winfo_children():
+            child.destroy()
+        self._status_label = ctk.CTkLabel(
+            self._list_frame,
+            text=msg,
+            text_color=MUTED_FG,
+            font=("맑은 고딕", 11),
+            anchor="w",
+        )
+        self._status_label.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+
+    def _render_results(self, items: list[dict]):
+        for child in self._list_frame.winfo_children():
+            child.destroy()
+
+        if not items:
+            self._show_status("검색 결과가 없습니다.")
+            return
+
+        for idx, item in enumerate(items):
+            self._build_result_row(idx, item)
+
+    def _build_result_row(self, idx: int, item: dict):
+        title = str(item.get("title") or "")
+        sequence = str(item.get("sequence") or "")
+        source = str(item.get("source") or "")
+        source_badge = {"bugs": "🌐 Bugs", "manual": "✏️ 직접", "history": "📅 이력"}.get(source, source)
+
+        row = ctk.CTkFrame(
+            self._list_frame,
+            fg_color=TEXT_BG,
+            corner_radius=10,
+            border_width=1,
+            border_color=PANEL_BORDER,
+        )
+        row.grid(row=idx, column=0, sticky="ew", padx=6, pady=(0, 6))
+        row.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            row,
+            text=title,
+            text_color=TEXT_FG,
+            font=("맑은 고딕", 12, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
+
+        info_text = sequence if sequence else "(진행 순서 없음)"
+        ctk.CTkLabel(
+            row,
+            text=f"{info_text}  [{source_badge}]",
+            text_color=MUTED_FG,
+            font=("맑은 고딕", 10),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
+
+        ctk.CTkButton(
+            row,
+            text="추가",
+            width=56,
+            height=28,
+            corner_radius=8,
+            fg_color=ACCENT,
+            hover_color=ACCENT_DARK,
+            text_color=TEXT_FG,
+            font=("맑은 고딕", 11, "bold"),
+            command=lambda i=item: self._select(i),
+        ).grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 8), pady=8)
+
+    def _select(self, item: dict):
+        self.result = item
+        self.destroy()
+
+
     def __init__(self, parent, title, message, on_cancel=None):
         super().__init__(parent)
         self._on_cancel = on_cancel
@@ -230,6 +429,22 @@ class LyricsApp(ctk.CTk):
         self.weekly_history_items = []
         self._weekly_history_buttons = []
         self._weekly_history_expanded = {}
+        self._loaded_history_lyrics_by_title = {}
+        self.history_search_var = tk.StringVar(value="")
+        self.history_select_var = tk.StringVar(value="")
+        self.history_option_items = {}
+        self.history_filtered_items = []
+        self.repertoire_entries = []
+        self._sequence_syncing = False
+        self._sequence_parse_after_id = None
+        self._repertoire_drag_from_index = None
+        self._repertoire_drag_target_index = None
+        self._repertoire_drag_start_x = None
+        self._repertoire_drag_start_y = None
+        self._repertoire_drag_active = False
+        self._repertoire_row_frames = []
+        self._repertoire_row_no_labels = []
+        self._repertoire_drag_ghost = None
         self.brand_font_family = self.resolve_font_family(BRAND_FONT_CANDIDATES)
         self.install_error_reporting_hooks()
         self.setup_style()
@@ -778,8 +993,14 @@ class LyricsApp(ctk.CTk):
             font=("Segoe UI", 11),
         ).pack(anchor=tk.W, pady=(10, 0))
 
-        settings_frame = ctk.CTkFrame(top_bar, fg_color="transparent", bg_color="transparent")
-        settings_frame.grid(row=0, column=1, sticky=tk.E)
+        right_panel = ctk.CTkFrame(top_bar, fg_color="transparent", bg_color="transparent")
+        right_panel.grid(row=0, column=1, sticky=tk.NE)
+        right_panel.columnconfigure(0, weight=1)
+
+        self._create_right_menu_bar(right_panel)
+
+        settings_frame = ctk.CTkFrame(right_panel, fg_color="transparent", bg_color="transparent")
+        settings_frame.grid(row=1, column=0, sticky=tk.E, pady=(8, 0))
         settings_frame.columnconfigure(3, minsize=54)
         settings_frame.columnconfigure(5, minsize=34)
         settings_frame.columnconfigure(7, minsize=TEMPLATE_PREVIEW_WIDTH)
@@ -965,7 +1186,7 @@ class LyricsApp(ctk.CTk):
 
         ctk.CTkLabel(
             settings_frame,
-            text="가사 불러오기",
+            text="DB 이력 불러오기",
             text_color=TEXT_FG,
             font=("Segoe UI", 12, "bold"),
         ).grid(row=2, column=4, sticky=tk.E, pady=4)
@@ -986,18 +1207,56 @@ class LyricsApp(ctk.CTk):
             font=("Segoe UI", 14, "bold"),
         ).grid(row=2, column=5, sticky=tk.E, padx=(8, 6), pady=4)
 
-        self.weekly_history_scroll = ctk.CTkScrollableFrame(
+        self.history_load_panel = ctk.CTkFrame(
             settings_frame,
-            width=190,
-            height=120,
             fg_color=PANEL_SOFT_BG,
             bg_color="transparent",
             corner_radius=12,
-            scrollbar_button_color=ACCENT,
-            scrollbar_button_hover_color=ACCENT_DARK,
+            border_width=1,
+            border_color=PANEL_BORDER,
         )
-        self.weekly_history_scroll.grid(row=2, column=6, columnspan=2, sticky="ew", padx=(0, 0), pady=(4, 2))
-        self.weekly_history_scroll.columnconfigure(0, weight=1)
+        self.history_load_panel.grid(row=2, column=6, columnspan=2, sticky="ew", padx=(0, 0), pady=(4, 2))
+        self.history_load_panel.columnconfigure(0, weight=1)
+
+        self.history_search_entry = ctk.CTkEntry(
+            self.history_load_panel,
+            textvariable=self.history_search_var,
+            placeholder_text="주차/기간 검색...",
+            width=190,
+            height=30,
+            corner_radius=10,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            fg_color=TEXT_BG,
+            bg_color="transparent",
+            text_color=TEXT_FG,
+            font=("맑은 고딕", 10),
+        )
+        self.history_search_entry.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        self.history_search_entry.bind("<KeyRelease>", self.on_history_search_keyrelease)
+
+        self.history_dropdown = ttk.Combobox(
+            self.history_load_panel,
+            textvariable=self.history_select_var,
+            state="readonly",
+            values=["저장된 DB 이력이 없습니다"],
+        )
+        self.history_dropdown.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
+
+        self.history_load_btn = ctk.CTkButton(
+            self.history_load_panel,
+            text="선택 이력 불러오기",
+            command=self.load_selected_history_item,
+            height=28,
+            corner_radius=8,
+            fg_color=ACCENT_SOFT,
+            hover_color=ACCENT,
+            text_color=TEXT_FG,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            font=("맑은 고딕", 10, "bold"),
+        )
+        self.history_load_btn.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
 
         # --- Workspace ---
         workspace_frame = ctk.CTkFrame(content, fg_color="transparent", bg_color="transparent")
@@ -1010,7 +1269,8 @@ class LyricsApp(ctk.CTk):
             workspace_frame, fg_color=PANEL_BG, bg_color="transparent", corner_radius=16,
         )
         sequence_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        sequence_frame.rowconfigure(1, weight=1)
+        sequence_frame.rowconfigure(1, weight=0)
+        sequence_frame.rowconfigure(3, weight=1)
         sequence_frame.columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
@@ -1020,22 +1280,80 @@ class LyricsApp(ctk.CTk):
             font=("Segoe UI", 14, "bold"),
         ).grid(row=0, column=0, sticky=tk.W, padx=18, pady=(16, 10))
 
-        self.sequence_text = ctk.CTkTextbox(
+        sequence_input_frame = ctk.CTkFrame(
             sequence_frame,
-            fg_color=TEXT_BG,
+            fg_color="transparent",
             bg_color="transparent",
-            text_color=TEXT_FG,
-            border_color=PANEL_BORDER,
-            border_width=1,
-            corner_radius=16,
-            wrap=tk.WORD,
-            font=("맑은 고딕", 12),
+            corner_radius=0,
         )
-        self.sequence_text.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 18))
-        self.sequence_text.tag_config("placeholder", foreground="#9aa3af")
-        self.sequence_text.bind("<FocusIn>", self.on_sequence_focus_in)
-        self.sequence_text.bind("<FocusOut>", self.on_sequence_focus_out)
-        self.show_sequence_guide()
+        sequence_input_frame.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
+        sequence_input_frame.columnconfigure(0, weight=0)
+        sequence_input_frame.columnconfigure(1, weight=0)
+        sequence_input_frame.columnconfigure(2, weight=1)
+
+        ctk.CTkButton(
+            sequence_input_frame,
+            text="레파토리 입력하기",
+            command=self.open_repertoire_input_dialog,
+            width=140,
+            height=34,
+            corner_radius=10,
+            fg_color="#ffffff",
+            bg_color="transparent",
+            hover_color=ACCENT_SOFT,
+            text_color=TEXT_FG,
+            border_width=1,
+            border_color=ACCENT,
+            font=("맑은 고딕", 11, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+
+        ctk.CTkButton(
+            sequence_input_frame,
+            text="🔍 DB에서 추가",
+            command=self.open_lyrics_search_dialog,
+            width=120,
+            height=34,
+            corner_radius=10,
+            fg_color=ACCENT_SOFT,
+            bg_color="transparent",
+            hover_color=ACCENT,
+            text_color=TEXT_FG,
+            border_width=1,
+            border_color=ACCENT,
+            font=("맑은 고딕", 11),
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        self.repertoire_summary_var = tk.StringVar(value="입력된 레파토리 없음")
+        ctk.CTkLabel(
+            sequence_input_frame,
+            textvariable=self.repertoire_summary_var,
+            text_color=MUTED_FG,
+            font=("맑은 고딕", 11),
+            anchor="w",
+            justify=tk.LEFT,
+        ).grid(row=0, column=2, sticky="w", padx=(12, 0))
+
+        ctk.CTkLabel(
+            sequence_frame,
+            text="붙여넣으면 자동 정리됩니다. 아래 목록에서 드래그로 순서 변경, 더블클릭으로 수정",
+            text_color=MUTED_FG,
+            font=("맑은 고딕", 10),
+            anchor="w",
+            justify=tk.LEFT,
+        ).grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 8))
+
+        self.repertoire_sort_scroll = ctk.CTkScrollableFrame(
+            sequence_frame,
+            fg_color=PANEL_SOFT_BG,
+            bg_color="transparent",
+            corner_radius=14,
+            scrollbar_button_color=ACCENT,
+            scrollbar_button_hover_color=ACCENT_DARK,
+            height=170,
+        )
+        self.repertoire_sort_scroll.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 16))
+        self.repertoire_sort_scroll.columnconfigure(0, weight=1)
+        self.refresh_repertoire_sort_list()
 
         lyrics_frame = ctk.CTkFrame(
             workspace_frame, fg_color=PANEL_BG, bg_color="transparent", corner_radius=16,
@@ -1043,6 +1361,7 @@ class LyricsApp(ctk.CTk):
         lyrics_frame.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         lyrics_frame.columnconfigure(0, weight=0)
         lyrics_frame.columnconfigure(1, weight=1)
+        lyrics_frame.columnconfigure(2, weight=0)
         lyrics_frame.rowconfigure(1, weight=1)
 
         ctk.CTkLabel(
@@ -1057,6 +1376,23 @@ class LyricsApp(ctk.CTk):
             text_color=MUTED_FG,
             font=("맑은 고딕", 12),
         ).grid(row=0, column=1, sticky=tk.W, padx=(0, 18), pady=(16, 10))
+
+        self.reload_current_lyrics_btn = ctk.CTkButton(
+            lyrics_frame,
+            text="⟳",
+            command=self.reload_current_song_lyrics_from_history,
+            width=30,
+            height=30,
+            corner_radius=15,
+            fg_color="transparent",
+            bg_color="transparent",
+            hover_color=ACCENT_SOFT,
+            text_color=TEXT_FG,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            font=("Segoe UI", 13, "bold"),
+        )
+        self.reload_current_lyrics_btn.grid(row=0, column=2, sticky=tk.E, padx=(0, 14), pady=(12, 10))
 
         self.song_scroll = ctk.CTkScrollableFrame(
             lyrics_frame,
@@ -1134,38 +1470,6 @@ class LyricsApp(ctk.CTk):
             font=("Segoe UI", 13, "bold"),
         )
         self.songlist_btn.pack(side=tk.RIGHT, padx=6, pady=10)
-
-        # --- Log area ---
-        log_frame = ctk.CTkFrame(
-            content,
-            fg_color=PANEL_BG,
-            bg_color="transparent",
-            corner_radius=16,
-            border_width=1,
-            border_color=PANEL_BORDER,
-        )
-        log_frame.grid(row=3, column=0, sticky="ew", padx=28, pady=(6, 24))
-        log_frame.columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            log_frame,
-            text="작업 로그",
-            text_color=TEXT_FG,
-            font=("Segoe UI", 13, "bold"),
-        ).grid(row=0, column=0, sticky=tk.W, padx=18, pady=(12, 6))
-
-        self.log_area = ctk.CTkTextbox(
-            log_frame,
-            height=100,
-            state="disabled",
-            fg_color=LOG_BG,
-            bg_color="transparent",
-            text_color="#f6edf1",
-            border_width=0,
-            corner_radius=12,
-            font=("Consolas", 10),
-        )
-        self.log_area.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 14))
 
     def draw_background(self, width, height):
         self.background_canvas.delete("background")
@@ -1268,11 +1572,175 @@ class LyricsApp(ctk.CTk):
         if hasattr(self, "_recent_log_lines"):
             self._recent_log_lines.append(str(message))
             self._recent_log_lines = self._recent_log_lines[-30:]
-        self.log_area.configure(state="normal")
-        self.log_area.insert("end", message + "\n")
-        self.log_area.see("end")
-        self.log_area.configure(state="disabled")
-        self.update_idletasks()
+        if hasattr(self, "log_area"):
+            self.log_area.configure(state="normal")
+            self.log_area.insert("end", message + "\n")
+            self.log_area.see("end")
+            self.log_area.configure(state="disabled")
+            self.update_idletasks()
+
+    def _create_right_menu_bar(self, parent):
+        menu_frame = ctk.CTkFrame(parent, fg_color="transparent", bg_color="transparent")
+        menu_frame.grid(row=0, column=0, sticky=tk.E)
+
+        file_items = [
+            ("작업 로그 다운로드", self.download_work_log),
+            ("-", None),
+            ("종료", self.on_close),
+        ]
+        tools_items = [
+            ("레파토리 입력하기", self.open_repertoire_input_dialog),
+            ("레파토리 인식", lambda: self.refresh_song_list(trigger_download=True)),
+        ]
+        log_items = [
+            ("작업 로그 다운로드", self.download_work_log),
+            ("로그 첨부 버그 리포트", self.report_bug_with_logs),
+        ]
+        help_items = [
+            ("앱 정보", self.show_app_about),
+        ]
+
+        self._add_menu_button(menu_frame, "파일", file_items)
+        self._add_menu_button(menu_frame, "도구", tools_items)
+        self._add_menu_button(menu_frame, "로그", log_items)
+        self._add_menu_button(menu_frame, "도움말", help_items)
+
+        self._right_menu_frame = menu_frame
+
+    def _add_menu_button(self, parent, title, items):
+        btn = ctk.CTkButton(
+            parent,
+            text=f"{title} ▾",
+            width=84,
+            height=30,
+            corner_radius=10,
+            fg_color="#ffffff",
+            bg_color="transparent",
+            hover_color=ACCENT_SOFT,
+            text_color=TEXT_FG,
+            border_width=1,
+            border_color=PANEL_BORDER,
+            font=("맑은 고딕", 10, "bold"),
+            command=None,
+        )
+        btn.configure(command=lambda b=btn, rows=items: self._open_menu_popup(b, rows))
+        btn.pack(side=tk.RIGHT, padx=(6, 0), pady=(0, 2))
+
+    def _open_menu_popup(self, button, items):
+        popup = tk.Menu(self, tearoff=0)
+        try:
+            popup.configure(
+                bg=TEXT_BG,
+                fg=TEXT_FG,
+                activebackground=ACCENT_SOFT,
+                activeforeground=TEXT_FG,
+                relief=tk.FLAT,
+                borderwidth=1,
+            )
+        except Exception:
+            pass
+
+        for label, command in items:
+            if label == "-":
+                popup.add_separator()
+            else:
+                popup.add_command(label=label, command=command)
+
+        x = button.winfo_rootx()
+        y = button.winfo_rooty() + button.winfo_height() + 2
+        try:
+            popup.tk_popup(x, y)
+        finally:
+            popup.grab_release()
+
+    def show_app_about(self):
+        messagebox.showinfo(
+            "앱 정보",
+            "PPT Gen\n레파토리와 가사를 정리해 파워포인트를 생성합니다.",
+        )
+
+    def build_work_log_text(self):
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            f"[{now}] PPT Gen 작업 로그",
+            f"서버 URL: {self.get_server_url()}",
+            f"현재 선택 곡: {self.current_song_title or '-'}",
+            "",
+            "[최근 로그]",
+        ]
+        lines.extend(getattr(self, "_recent_log_lines", []))
+        return "\n".join(lines).strip() + "\n"
+
+    def download_work_log(self, show_message=True):
+        default_name = f"work-log-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+        try:
+            initial_dir = self.get_output_dir()
+        except Exception:
+            initial_dir = os.getcwd()
+
+        save_path = filedialog.asksaveasfilename(
+            title="작업 로그 저장",
+            defaultextension=".txt",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            initialdir=initial_dir,
+            initialfile=default_name,
+        )
+        if not save_path:
+            return None
+
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(self.build_work_log_text())
+
+        self.log(f"[완료] 작업 로그를 저장했습니다: {save_path}")
+        if show_message:
+            messagebox.showinfo("작업 로그", f"작업 로그를 저장했습니다.\n{save_path}")
+        return save_path
+
+    def report_bug_with_logs(self):
+        log_path = self.download_work_log(show_message=False)
+        if not log_path:
+            return
+
+        dialog = MultilineDialog(
+            self,
+            "서버 버그 리포트",
+            "증상과 재현 방법을 입력하세요.\n(저장한 작업 로그가 함께 첨부됩니다)",
+        )
+        message = (dialog.result or "").strip()
+        if not message:
+            messagebox.showwarning("서버 버그 리포트", "버그 설명을 입력해 주세요.")
+            return
+
+        report = build_error_report(
+            context="manual bug report",
+            message=message,
+            traceback_text="",
+            extra={"log_file": os.path.abspath(log_path)},
+            log_tail=getattr(self, "_recent_log_lines", []),
+        )
+
+        server_url = self.get_server_url()
+        self.show_busy_dialog("버그 리포트 전송", "서버로 버그 리포트를 전송하고 있습니다.")
+
+        def run():
+            error = None
+            try:
+                send_error_report(server_url, report)
+            except Exception as e:
+                error = e
+
+            def on_done():
+                self.hide_busy_dialog()
+                if error is not None:
+                    self.report_exception("manual bug report", error)
+                    messagebox.showerror("서버 버그 리포트", f"리포트 전송에 실패했습니다.\n{error}")
+                    return
+                self.log("[완료] 서버에 버그 리포트를 전송했습니다.")
+                messagebox.showinfo("서버 버그 리포트", "버그 리포트를 전송했습니다.")
+
+            self.after(0, on_done)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def show_busy_dialog(self, title, message, on_cancel=None):
         self.hide_busy_dialog()
@@ -1359,7 +1827,7 @@ class LyricsApp(ctk.CTk):
         threading.Thread(target=run, daemon=True).start()
 
     def _sequence_text_from_entries(self, sequence_entries):
-        lines = []
+        chunks = []
         for entry in sequence_entries:
             if not isinstance(entry, dict):
                 continue
@@ -1367,28 +1835,505 @@ class LyricsApp(ctk.CTk):
             sequence = str(entry.get("sequence", "")).strip()
             if not title or not sequence:
                 continue
-            lines.append(title)
-            lines.append(sequence)
-        return "\n".join(lines).strip()
+            chunks.append(f"{title}\n{sequence}")
+        # 빈 줄을 넣어 곡 단위를 시각적으로 구분한다.
+        return "\n\n".join(chunks).strip()
+
+    def _history_option_label(self, item):
+        week_start = str(item.get("week_start_date", "?"))
+        week_end = str(item.get("week_end_date", "?"))
+        sequence_entries = item.get("sequence_entries") if isinstance(item, dict) else []
+        song_count = len(sequence_entries) if isinstance(sequence_entries, list) else 0
+        return f"{week_start} ~ {week_end} ({song_count}곡)"
+
+    def on_history_search_keyrelease(self, event=None):
+        self.render_weekly_history_accordion()
+
+    def load_selected_history_item(self):
+        selected = self.history_select_var.get().strip()
+        if not selected:
+            messagebox.showinfo("DB 이력 불러오기", "불러올 이력을 먼저 선택하세요.")
+            return
+
+        item = self.history_option_items.get(selected)
+        if item is None:
+            messagebox.showinfo("DB 이력 불러오기", "선택한 이력을 찾을 수 없습니다.")
+            return
+
+        self.apply_weekly_history_item(item)
+
+    def _clean_repertoire_title(self, value):
+        text = str(value or "").strip()
+        text = re.sub(r"^\s*\d+\s*[\.)]\s*", "", text)
+        return text.strip()
+
+    def _normalize_repertoire_entries(self, raw_text):
+        lines = [line.strip() for line in str(raw_text or "").splitlines() if line.strip()]
+        entries = []
+        idx = 0
+        while idx + 1 < len(lines):
+            title = self._clean_repertoire_title(lines[idx])
+            sequence = lines[idx + 1].strip()
+            if title and sequence:
+                entries.append((title, sequence))
+            idx += 2
+        return entries
+
+    def _format_repertoire_entries(self, entries):
+        rows = []
+        for title, sequence in entries:
+            rows.append(str(title).strip())
+            rows.append(str(sequence).strip())
+        return "\n".join(rows).strip()
+
+    def _update_repertoire_summary(self):
+        count = len(self.repertoire_entries)
+        if count <= 0:
+            self.repertoire_summary_var.set("입력된 레파토리 없음")
+            return
+        self.repertoire_summary_var.set(f"총 {count}곡")
+
+    def open_repertoire_input_dialog(self):
+        initial_text = self._format_repertoire_entries(self.repertoire_entries)
+        dialog = MultilineDialog(
+            self,
+            "레파토리 입력",
+            "한 곡당 2줄(제목/진행순서)로 입력하세요.\n예)\n한나의 노래\nI-V1-V2-C",
+            initial_text=initial_text,
+        )
+        raw = (dialog.result or "").strip()
+        if not raw:
+            return
+
+        entries = self._normalize_repertoire_entries(raw)
+        if not entries:
+            messagebox.showwarning("레파토리 입력", "입력 형식을 확인해 주세요. (제목/진행순서 2줄 구성)")
+            return
+
+        self.repertoire_entries = entries
+        self.sequence_placeholder_visible = False
+        self.refresh_repertoire_sort_list()
+        self.refresh_song_list(show_message=False)
+
+    def open_lyrics_search_dialog(self):
+        """가사 DB 검색 다이얼로그를 열고, 선택된 항목을 레파토리에 추가합니다."""
+        server_url = self.get_server_url()
+        dialog = LyricsSearchDialog(self, server_url)
+        item = dialog.result
+        if not item:
+            return
+
+        title = str(item.get("title") or "").strip()
+        sequence = str(item.get("sequence") or "").strip()
+        lyrics = str(item.get("lyrics") or "").strip()
+
+        if not title:
+            return
+
+        if not sequence:
+            # 진행 순서가 없으면 편집 다이얼로그로 직접 입력 유도
+            dialog2 = MultilineDialog(
+                self,
+                "진행 순서 입력",
+                f"'{title}'의 진행 순서를 입력하세요.\n예) I-V1-V2-C-C",
+                initial_text="",
+            )
+            sequence = (dialog2.result or "").strip().splitlines()[0].strip() if dialog2.result else ""
+
+        if not sequence:
+            messagebox.showwarning("DB에서 추가", "진행 순서가 없어 추가하지 않았습니다.")
+            return
+
+        # 이미 있는 곡이면 순서 업데이트
+        for idx, (t, _) in enumerate(self.repertoire_entries):
+            if t == title:
+                self.repertoire_entries[idx] = (title, sequence)
+                if lyrics:
+                    self.lyrics_store[title] = lyrics
+                self.refresh_repertoire_sort_list()
+                self.sync_sequence_text_from_repertoire()
+                self.refresh_song_list(show_message=False)
+                self.log(f"[DB] '{title}' 레파토리를 업데이트했습니다.")
+                return
+
+        self.repertoire_entries.append((title, sequence))
+        if lyrics:
+            self.lyrics_store[title] = lyrics
+        self.sequence_placeholder_visible = False
+        self.refresh_repertoire_sort_list()
+        self.sync_sequence_text_from_repertoire()
+        self.refresh_song_list(show_message=False)
+        self.log(f"[DB] '{title}' 을(를) 레파토리에 추가했습니다.")
+
+
+        self._sequence_syncing = True
+        self.sequence_placeholder_visible = not bool(self.repertoire_entries)
+        self._sequence_syncing = False
+        self._update_repertoire_summary()
+
+    def _repertoire_target_index_by_y(self, y_root):
+        if not self._repertoire_row_frames:
+            return 0
+        for index, frame in enumerate(self._repertoire_row_frames):
+            midpoint = frame.winfo_rooty() + (frame.winfo_height() // 2)
+            if y_root < midpoint:
+                return index
+        return len(self._repertoire_row_frames) - 1
+
+    def _on_repertoire_row_press(self, index, event=None):
+        self._repertoire_drag_from_index = index
+        self._repertoire_drag_target_index = index
+        self._repertoire_drag_start_x = event.x_root if event is not None else None
+        self._repertoire_drag_start_y = event.y_root if event is not None else None
+        self._repertoire_drag_active = False
+        self._set_repertoire_drag_cursor("hand2")
+        self._apply_repertoire_drag_visuals()
+
+    def _on_repertoire_row_motion(self, _index, event=None):
+        if self._repertoire_drag_from_index is None or event is None:
+            return
+
+        if not self._repertoire_drag_active:
+            if self._repertoire_drag_start_x is None or self._repertoire_drag_start_y is None:
+                return
+            moved_x = abs(event.x_root - self._repertoire_drag_start_x)
+            moved_y = abs(event.y_root - self._repertoire_drag_start_y)
+            if max(moved_x, moved_y) < 6:
+                return
+            self._repertoire_drag_active = True
+            self._set_repertoire_drag_cursor("fleur")
+            self._create_repertoire_drag_ghost(self._repertoire_drag_from_index, event)
+
+        self._repertoire_drag_target_index = self._repertoire_target_index_by_y(event.y_root)
+        self._move_repertoire_drag_ghost(event)
+        self._apply_repertoire_drag_visuals()
+
+    def _on_repertoire_row_release(self, _index, event=None):
+        if self._repertoire_drag_from_index is None or event is None:
+            self._repertoire_drag_from_index = None
+            self._repertoire_drag_target_index = None
+            self._repertoire_drag_start_x = None
+            self._repertoire_drag_start_y = None
+            self._repertoire_drag_active = False
+            self._set_repertoire_drag_cursor("hand2")
+            self._destroy_repertoire_drag_ghost()
+            self._apply_repertoire_drag_visuals()
+            return
+
+        if not self._repertoire_drag_active:
+            self._repertoire_drag_from_index = None
+            self._repertoire_drag_target_index = None
+            self._repertoire_drag_start_x = None
+            self._repertoire_drag_start_y = None
+            self._set_repertoire_drag_cursor("hand2")
+            self._destroy_repertoire_drag_ghost()
+            self._apply_repertoire_drag_visuals()
+            return
+
+        target_index = self._repertoire_target_index_by_y(event.y_root)
+        source_index = self._repertoire_drag_from_index
+        self._repertoire_drag_from_index = None
+        self._repertoire_drag_target_index = None
+        self._repertoire_drag_start_x = None
+        self._repertoire_drag_start_y = None
+        self._repertoire_drag_active = False
+        self._set_repertoire_drag_cursor("hand2")
+        self._destroy_repertoire_drag_ghost()
+
+        if source_index == target_index:
+            self._apply_repertoire_drag_visuals()
+            return
+        if source_index < 0 or source_index >= len(self.repertoire_entries):
+            self._apply_repertoire_drag_visuals()
+            return
+        if target_index < 0 or target_index >= len(self.repertoire_entries):
+            self._apply_repertoire_drag_visuals()
+            return
+
+        moved = self.repertoire_entries.pop(source_index)
+        self.repertoire_entries.insert(target_index, moved)
+        self.refresh_repertoire_sort_list()
+        self.sync_sequence_text_from_repertoire()
+        self._flash_repertoire_row(target_index)
+
+    def _create_repertoire_drag_ghost(self, index, event=None):
+        self._destroy_repertoire_drag_ghost()
+        if index < 0 or index >= len(self.repertoire_entries):
+            return
+
+        title, sequence = self.repertoire_entries[index]
+        short_title = str(title).strip()
+        short_sequence = str(sequence).strip()
+        if len(short_title) > 18:
+            short_title = short_title[:18] + "..."
+        if len(short_sequence) > 24:
+            short_sequence = short_sequence[:24] + "..."
+
+        ghost = tk.Toplevel(self)
+        ghost.overrideredirect(True)
+        ghost.attributes("-topmost", True)
+        try:
+            ghost.attributes("-alpha", 0.93)
+        except Exception:
+            pass
+
+        ghost.configure(bg=ACCENT_DARK)
+        label = tk.Label(
+            ghost,
+            text=f"☰ {short_title}\n{short_sequence}",
+            bg=ACCENT_SOFT,
+            fg=TEXT_FG,
+            justify=tk.LEFT,
+            anchor="w",
+            padx=10,
+            pady=6,
+            font=("맑은 고딕", 10, "bold"),
+        )
+        label.pack(fill=tk.BOTH, expand=True)
+
+        self._repertoire_drag_ghost = ghost
+        if event is not None:
+            self._move_repertoire_drag_ghost(event)
+
+    def _move_repertoire_drag_ghost(self, event):
+        if self._repertoire_drag_ghost is None or event is None:
+            return
+        x = int(event.x_root + 16)
+        y = int(event.y_root + 12)
+        self._repertoire_drag_ghost.geometry(f"+{x}+{y}")
+
+    def _destroy_repertoire_drag_ghost(self):
+        if self._repertoire_drag_ghost is None:
+            return
+        try:
+            self._repertoire_drag_ghost.destroy()
+        except Exception:
+            pass
+        self._repertoire_drag_ghost = None
+
+    def _set_repertoire_drag_cursor(self, cursor_name):
+        for frame in self._repertoire_row_frames:
+            frame.configure(cursor=cursor_name)
+            for child in frame.winfo_children():
+                try:
+                    child.configure(cursor=cursor_name)
+                except Exception:
+                    pass
+
+    def _apply_repertoire_drag_visuals(self):
+        source_index = self._repertoire_drag_from_index
+        target_index = self._repertoire_drag_target_index
+        for index, frame in enumerate(self._repertoire_row_frames):
+            border_color = PANEL_BORDER
+            fg_color = TEXT_BG
+            border_width = 1
+            marker = f"{index + 1}"
+            if source_index is not None and index == source_index:
+                border_color = ACCENT
+                fg_color = ACCENT_SOFT
+                border_width = 2
+                marker = "☰"
+            elif target_index is not None and index == target_index:
+                border_color = ACCENT_DARK
+                border_width = 2
+                marker = "↓"
+            frame.configure(border_color=border_color, fg_color=fg_color, border_width=border_width)
+            if index < len(self._repertoire_row_no_labels):
+                self._repertoire_row_no_labels[index].configure(text=marker)
+
+    def _flash_repertoire_row(self, index, step=0):
+        if index < 0 or index >= len(self._repertoire_row_frames):
+            return
+        frame = self._repertoire_row_frames[index]
+        if step == 0:
+            frame.configure(border_color=ACCENT, fg_color=ACCENT_SOFT)
+            self.after(80, lambda: self._flash_repertoire_row(index, step=1))
+            return
+        if step == 1:
+            frame.configure(border_color=PANEL_BORDER, fg_color=TEXT_BG)
+            self.after(70, lambda: self._flash_repertoire_row(index, step=2))
+            return
+        frame.configure(border_color=ACCENT_DARK, fg_color=TEXT_BG)
+        self.after(70, lambda: frame.configure(border_color=PANEL_BORDER, fg_color=TEXT_BG))
+
+    def edit_repertoire_item(self, index):
+        if index < 0 or index >= len(self.repertoire_entries):
+            return
+
+        title, sequence = self.repertoire_entries[index]
+        dialog = MultilineDialog(
+            self,
+            "레파토리 수정",
+            "첫 줄: 곡 제목\n둘째 줄: 진행 순서",
+            initial_text=f"{title}\n{sequence}",
+        )
+        edited = (dialog.result or "").strip()
+        if not edited:
+            return
+
+        lines = [line.strip() for line in edited.splitlines() if line.strip()]
+        if len(lines) < 2:
+            messagebox.showwarning("레파토리 수정", "두 줄(곡 제목/진행 순서)로 입력해 주세요.")
+            return
+
+        new_title = self._clean_repertoire_title(lines[0])
+        new_sequence = lines[1]
+        if not new_title or not new_sequence:
+            messagebox.showwarning("레파토리 수정", "곡 제목과 진행 순서를 모두 입력해 주세요.")
+            return
+
+        self.repertoire_entries[index] = (new_title, new_sequence)
+        self.refresh_repertoire_sort_list()
+        self.sync_sequence_text_from_repertoire()
+
+    def refresh_repertoire_sort_list(self):
+        if not hasattr(self, "repertoire_sort_scroll"):
+            return
+
+        self._destroy_repertoire_drag_ghost()
+        for child in self.repertoire_sort_scroll.winfo_children():
+            child.destroy()
+        self._repertoire_row_frames = []
+        self._repertoire_row_no_labels = []
+
+        if not self.repertoire_entries:
+            ctk.CTkLabel(
+                self.repertoire_sort_scroll,
+                text="인식된 레파토리가 없습니다.",
+                text_color=MUTED_FG,
+                font=("맑은 고딕", 11),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=8, pady=6)
+            return
+
+        for index, (title, sequence) in enumerate(self.repertoire_entries):
+            row_frame = ctk.CTkFrame(
+                self.repertoire_sort_scroll,
+                fg_color=TEXT_BG,
+                bg_color="transparent",
+                corner_radius=10,
+                border_width=1,
+                border_color=PANEL_BORDER,
+            )
+            row_frame.grid(row=index, column=0, sticky="ew", padx=6, pady=(0, 8))
+            row_frame.columnconfigure(1, weight=1)
+            row_frame.columnconfigure(2, weight=0)
+
+            no_label = ctk.CTkLabel(
+                row_frame,
+                text=f"{index + 1}",
+                text_color=MUTED_FG,
+                font=("Segoe UI", 11, "bold"),
+                width=24,
+            )
+            no_label.grid(row=0, column=0, sticky="nw", padx=(10, 8), pady=(8, 6))
+
+            title_label = ctk.CTkLabel(
+                row_frame,
+                text=title,
+                text_color=TEXT_FG,
+                font=("맑은 고딕", 11, "bold"),
+                anchor="w",
+                justify=tk.LEFT,
+            )
+            title_label.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(8, 2))
+
+            sequence_label = ctk.CTkLabel(
+                row_frame,
+                text=sequence,
+                text_color=MUTED_FG,
+                font=("맑은 고딕", 10),
+                anchor="w",
+                justify=tk.LEFT,
+                wraplength=360,
+            )
+            sequence_label.grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=(0, 8))
+
+            edit_btn = ctk.CTkButton(
+                row_frame,
+                text="✎",
+                width=28,
+                height=28,
+                corner_radius=14,
+                fg_color="transparent",
+                bg_color="transparent",
+                hover_color=ACCENT_SOFT,
+                text_color=TEXT_FG,
+                border_width=1,
+                border_color=PANEL_BORDER,
+                font=("Segoe UI", 12, "bold"),
+                command=lambda i=index: self.edit_repertoire_item(i),
+            )
+            edit_btn.grid(row=0, column=2, rowspan=2, sticky="ne", padx=(0, 8), pady=(8, 8))
+
+            for widget in (row_frame, no_label, title_label, sequence_label):
+                widget.configure(cursor="hand2")
+                widget.bind("<ButtonPress-1>", lambda e, i=index: self._on_repertoire_row_press(i, e))
+                widget.bind("<B1-Motion>", lambda e, i=index: self._on_repertoire_row_motion(i, e))
+                widget.bind("<ButtonRelease-1>", lambda e, i=index: self._on_repertoire_row_release(i, e))
+                widget.bind("<Double-Button-1>", lambda e, i=index: self.edit_repertoire_item(i))
+
+            edit_btn.configure(cursor="hand2")
+
+            self._repertoire_row_frames.append(row_frame)
+            self._repertoire_row_no_labels.append(no_label)
+
+        self._apply_repertoire_drag_visuals()
+
+    def _reparse_sequence_text(self):
+        if self.sequence_placeholder_visible:
+            self.repertoire_entries = []
+            self.refresh_repertoire_sort_list()
+            return
+
+        raw = self.sequence_text.get("1.0", "end")
+        entries = self._normalize_repertoire_entries(raw)
+        if not entries:
+            self.repertoire_entries = []
+            self.refresh_repertoire_sort_list()
+            return
+
+        self.repertoire_entries = entries
+        self.refresh_repertoire_sort_list()
+        self.sync_sequence_text_from_repertoire()
+
+    def on_sequence_modified(self, event=None):
+        if self._sequence_syncing:
+            self.sequence_text.edit_modified(False)
+            return
+
+        if not self.sequence_text.edit_modified():
+            return
+
+        self.sequence_text.edit_modified(False)
+        if self._sequence_parse_after_id is not None:
+            try:
+                self.after_cancel(self._sequence_parse_after_id)
+            except Exception:
+                pass
+        self._sequence_parse_after_id = self.after(250, self._reparse_sequence_text)
 
     def apply_weekly_history_item(self, item):
         sequence_entries = item.get("sequence_entries") if isinstance(item, dict) else None
         lyrics_by_title = item.get("lyrics_by_title") if isinstance(item, dict) else None
         if not isinstance(sequence_entries, list) or not isinstance(lyrics_by_title, dict):
-            messagebox.showerror("오류", "선택한 주간 작업 이력 형식이 올바르지 않습니다.")
+            messagebox.showerror("DB 이력 불러오기", "선택한 주간 작업 이력 형식이 올바르지 않습니다.")
             return
 
         sequence_text = self._sequence_text_from_entries(sequence_entries)
         if not sequence_text:
-            messagebox.showwarning("가사 불러오기", "선택한 주간 작업 이력에 레파토리가 없습니다.")
+            messagebox.showwarning("DB 이력 불러오기", "선택한 주간 작업 이력에 레파토리가 없습니다.")
             return
 
         self.sequence_text.configure(state="normal")
         self.sequence_text.delete("1.0", "end")
         self.sequence_text.insert("1.0", sequence_text)
         self.sequence_placeholder_visible = False
+        self.repertoire_entries = self._normalize_repertoire_entries(sequence_text)
+        self.refresh_repertoire_sort_list()
 
         self.lyrics_store = {str(k): str(v) for k, v in lyrics_by_title.items()}
+        self._loaded_history_lyrics_by_title = dict(self.lyrics_store)
         self.refresh_song_list(show_message=False, trigger_download=False)
 
         week_start = item.get("week_start_date", "?")
@@ -1400,14 +2345,45 @@ class LyricsApp(ctk.CTk):
         self.show_sequence_guide()
         self.sequence_entries = []
         self.lyrics_store = {}
+        self._loaded_history_lyrics_by_title = {}
         self.current_song_title = None
         self.current_song_var.set("곡을 선택하세요")
         self.populate_song_list([], preserve_current=False)
         self.show_lyrics_guide()
         self.log("[안내] 불러온 작업 내용을 초기화했습니다.")
 
+    def reload_current_song_lyrics_from_history(self):
+        if not self.current_song_title:
+            messagebox.showinfo("가사 불러오기", "먼저 곡을 선택하세요.")
+            return
+
+        lyrics = self._loaded_history_lyrics_by_title.get(self.current_song_title, "")
+        if not str(lyrics).strip():
+            messagebox.showinfo("가사 불러오기", f"'{self.current_song_title}'에 저장된 불러오기 이력이 없습니다.")
+            return
+
+        self.lyrics_store[self.current_song_title] = str(lyrics)
+        self.set_lyrics_editor_text(str(lyrics))
+        self.log(f"[완료] '{self.current_song_title}' 가사를 다시 불러왔습니다.")
+
     def get_server_url(self):
         return self.server_url_var.get().strip() or DEFAULT_SERVER_URL
+
+    def _save_lyrics_to_catalog_async(self, song_title: str, lyrics: str):
+        """가사를 백그라운드에서 서버 카탈로그에 저장합니다 (best-effort)."""
+        if not song_title or not lyrics.strip():
+            return
+        server_url = self.get_server_url()
+        sequence = dict(self.sequence_entries).get(song_title, "")
+
+        def run():
+            try:
+                from ppt_server_client import save_lyrics_to_catalog, PptServerUnavailable
+                save_lyrics_to_catalog(server_url, song_title, lyrics, source="manual", sequence=sequence)
+            except Exception:
+                pass  # best-effort: 서버 오프라인이면 조용히 무시
+
+        threading.Thread(target=run, daemon=True).start()
 
     def get_max_lines_per_slide(self):
         try:
@@ -1446,6 +2422,8 @@ class LyricsApp(ctk.CTk):
             return False
 
     def get_sequence_entries(self):
+        if self.repertoire_entries:
+            return [(title, sequence) for title, sequence in self.repertoire_entries]
         if self.sequence_placeholder_visible:
             raise ValueError("레파토리 입력창이 비어 있습니다.")
         sequence_text = self.sequence_text.get("1.0", "end")
@@ -1466,12 +2444,16 @@ class LyricsApp(ctk.CTk):
         self.sequence_text.delete("1.0", "end")
         self.sequence_text.insert("1.0", SEQUENCE_GUIDE_TEXT, "placeholder")
         self.sequence_placeholder_visible = True
+        self.repertoire_entries = []
+        self.refresh_repertoire_sort_list()
+        self.sequence_text.edit_modified(False)
 
     def clear_sequence_guide(self):
         if not self.sequence_placeholder_visible:
             return
         self.sequence_text.delete("1.0", "end")
         self.sequence_placeholder_visible = False
+        self.sequence_text.edit_modified(False)
 
     def on_sequence_focus_in(self, event=None):
         self.clear_sequence_guide()
@@ -1479,6 +2461,8 @@ class LyricsApp(ctk.CTk):
     def on_sequence_focus_out(self, event=None):
         if not self.sequence_text.get("1.0", "end").strip():
             self.show_sequence_guide()
+            return
+        self._reparse_sequence_text()
 
     def show_lyrics_guide(self):
         self.loading_lyrics = True
@@ -1548,7 +2532,9 @@ class LyricsApp(ctk.CTk):
         if song_title == self.current_song_title:
             return
         if self.current_song_title and not self.lyrics_placeholder_visible:
-            self.lyrics_store[self.current_song_title] = self.get_lyrics_editor_text()
+            lyrics = self.get_lyrics_editor_text()
+            self.lyrics_store[self.current_song_title] = lyrics
+            self._save_lyrics_to_catalog_async(self.current_song_title, lyrics)
         self._set_song_selection(index)
         self.load_lyrics_for_song(song_title)
 
@@ -1591,115 +2577,46 @@ class LyricsApp(ctk.CTk):
         return selected_index
 
     def render_weekly_history_accordion(self):
-        if not hasattr(self, "weekly_history_scroll"):
+        if not hasattr(self, "history_dropdown"):
             return
-
-        for child in self.weekly_history_scroll.winfo_children():
-            child.destroy()
-        self._weekly_history_buttons = []
 
         items = self.weekly_history_items or []
+        query = self.history_search_var.get().strip().lower() if hasattr(self, "history_search_var") else ""
+        if query:
+            filtered = [
+                item
+                for item in items
+                if query in self._history_option_label(item).lower()
+            ]
+        else:
+            filtered = list(items)
+
+        self.history_filtered_items = filtered
+        self.history_option_items = {}
+
         if not items:
-            ctk.CTkLabel(
-                self.weekly_history_scroll,
-                text="저장된 주간 작업 이력이 없습니다.",
-                text_color=MUTED_FG,
-                font=("맑은 고딕", 11),
-                anchor="w",
-                justify=tk.LEFT,
-            ).grid(row=0, column=0, sticky="ew", padx=8, pady=6)
+            self.history_dropdown.configure(values=["저장된 DB 이력이 없습니다"])
+            self.history_select_var.set("저장된 DB 이력이 없습니다")
+            self.history_load_btn.configure(state="disabled")
             return
 
-        row_index = 0
-        for item in items:
-            week_start = str(item.get("week_start_date", "?"))
-            week_end = str(item.get("week_end_date", "?"))
-            sequence_entries = item.get("sequence_entries") if isinstance(item, dict) else []
-            song_count = len(sequence_entries) if isinstance(sequence_entries, list) else 0
-            item_key = f"{week_start}~{week_end}"
-            is_expanded = bool(self._weekly_history_expanded.get(item_key, False))
+        if not filtered:
+            self.history_dropdown.configure(values=["검색 결과 없음"])
+            self.history_select_var.set("검색 결과 없음")
+            self.history_load_btn.configure(state="disabled")
+            return
 
-            section = ctk.CTkFrame(
-                self.weekly_history_scroll,
-                fg_color=TEXT_BG,
-                bg_color="transparent",
-                corner_radius=10,
-                border_width=1,
-                border_color=PANEL_BORDER,
-            )
-            section.grid(row=row_index, column=0, sticky="ew", padx=6, pady=(0, 8))
-            section.columnconfigure(0, weight=1)
+        options = []
+        for item in filtered:
+            option = self._history_option_label(item)
+            options.append(option)
+            self.history_option_items[option] = item
 
-            header_btn = ctk.CTkButton(
-                section,
-                text="",
-                command=None,
-                anchor="w",
-                height=32,
-                corner_radius=8,
-                fg_color="transparent",
-                hover_color=ACCENT_SOFT,
-                text_color=TEXT_FG,
-                border_width=0,
-                font=("Segoe UI", 11, "bold"),
-            )
-            header_btn.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
-
-            body_frame = ctk.CTkFrame(
-                section,
-                fg_color="transparent",
-                bg_color="transparent",
-                corner_radius=0,
-            )
-            body_frame.columnconfigure(0, weight=1)
-
-            ctk.CTkLabel(
-                body_frame,
-                text=f"레파토리 {song_count}곡",
-                text_color=MUTED_FG,
-                font=("맑은 고딕", 10),
-                anchor="w",
-            ).grid(row=0, column=0, sticky="ew", padx=10, pady=(0, 6))
-
-            load_btn = ctk.CTkButton(
-                body_frame,
-                text="이 주 작업 불러오기",
-                command=lambda data=item: self.apply_weekly_history_item(data),
-                height=30,
-                corner_radius=8,
-                fg_color=ACCENT_SOFT,
-                hover_color=ACCENT,
-                text_color=TEXT_FG,
-                border_width=1,
-                border_color=PANEL_BORDER,
-                font=("맑은 고딕", 10, "bold"),
-            )
-            load_btn.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
-            self._weekly_history_buttons.append(load_btn)
-
-            def _refresh_section(
-                expanded,
-                key=item_key,
-                header=header_btn,
-                body=body_frame,
-                ws=week_start,
-                we=week_end,
-            ):
-                self._weekly_history_expanded[key] = expanded
-                arrow = "▾" if expanded else "▸"
-                header.configure(text=f"{arrow} {ws} ~ {we}")
-                if expanded:
-                    body.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 2))
-                else:
-                    body.grid_forget()
-
-            def _toggle_section(key=item_key):
-                _refresh_section(not bool(self._weekly_history_expanded.get(key, False)), key=key)
-
-            header_btn.configure(command=_toggle_section)
-            _refresh_section(is_expanded)
-
-            row_index += 1
+        self.history_dropdown.configure(values=options)
+        current = self.history_select_var.get().strip()
+        if current not in self.history_option_items:
+            self.history_select_var.set(options[0])
+        self.history_load_btn.configure(state="normal")
 
     def restore_song_selection(self):
         self.suppress_song_select = True
@@ -1941,6 +2858,8 @@ class LyricsApp(ctk.CTk):
 
         song_titles = [title for title, _ in self.sequence_entries]
         current_song = self.current_song_title
+        server_url = self.get_server_url()
+        sequence_map = {title: seq for title, seq in self.sequence_entries}
 
         self.set_action_buttons_state("disabled")
         self.set_editor_state("disabled")
@@ -1953,6 +2872,8 @@ class LyricsApp(ctk.CTk):
                     song_titles=song_titles,
                     existing_lyrics=self.lyrics_store,
                     log_func=lambda msg: self.after(0, lambda m=msg: self.log(m)),
+                    server_url=server_url,
+                    sequence_map=sequence_map,
                 )
                 def on_done():
                     self.lyrics_store.update(downloaded)
@@ -1975,6 +2896,7 @@ class LyricsApp(ctk.CTk):
                 self.after(0, on_error)
 
         threading.Thread(target=run, daemon=True).start()
+
 
     def generate_ppt(self):
         self.log("====================================")

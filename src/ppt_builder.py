@@ -15,6 +15,8 @@ def parse_lyrics_text(raw_text):
             continue
 
         part_key = lines[0].strip()
+        if not part_key:
+            continue
         lyrics_content = '\n'.join(line.strip() for line in lines[1:])
         lyrics_dict[part_key] = lyrics_content
 

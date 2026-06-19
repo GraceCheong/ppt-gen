@@ -199,3 +199,86 @@ def download_history_db_via_server(server_url, output_db_path, timeout=20):
 
     with open(output_db_path, "wb") as output_file:
         output_file.write(response.content)
+
+
+def search_lyrics_catalog(server_url, query, limit=10, timeout=10):
+    """가사 카탈로그에서 곡명으로 검색합니다. [{"title", "sequence", "lyrics", "source"}, ...] 반환."""
+    url = server_url.rstrip("/") + "/lyrics/search"
+    try:
+        response = requests.get(
+            url, params={"q": query, "limit": max(1, min(limit, 50))}, timeout=(2, timeout)
+        )
+    except requests.RequestException as exc:
+        raise PptServerUnavailable(f"endpoint=/lyrics/search, 네트워크 오류: {exc}") from exc
+
+    if response.status_code in (404, 405):
+        raise PptServerEndpointUnavailable(
+            f"endpoint=/lyrics/search, 서버 오류 {response.status_code}"
+        )
+    if response.status_code >= 400:
+        raise PptServerResponseError(
+            f"endpoint=/lyrics/search, 서버 오류 {response.status_code}: {_response_detail(response)}",
+            status_code=response.status_code,
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise PptServerUnavailable("endpoint=/lyrics/search, JSON 응답을 해석할 수 없습니다.") from exc
+
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise PptServerUnavailable("endpoint=/lyrics/search, items 형식이 올바르지 않습니다.")
+    return items
+
+
+def lookup_lyrics_by_title(server_url, title, timeout=10):
+    """정확한 곡명으로 가사를 조회합니다. 없으면 None 반환."""
+    url = server_url.rstrip("/") + "/lyrics/by-title"
+    try:
+        response = requests.get(url, params={"title": title}, timeout=(2, timeout))
+    except requests.RequestException as exc:
+        raise PptServerUnavailable(f"endpoint=/lyrics/by-title, 네트워크 오류: {exc}") from exc
+
+    if response.status_code == 404:
+        return None
+    if response.status_code in (405,):
+        raise PptServerEndpointUnavailable(
+            f"endpoint=/lyrics/by-title, 서버 오류 {response.status_code}"
+        )
+    if response.status_code >= 400:
+        raise PptServerResponseError(
+            f"endpoint=/lyrics/by-title, 서버 오류 {response.status_code}: {_response_detail(response)}",
+            status_code=response.status_code,
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise PptServerUnavailable("endpoint=/lyrics/by-title, JSON 응답을 해석할 수 없습니다.") from exc
+
+    return data if isinstance(data, dict) else None
+
+
+def save_lyrics_to_catalog(server_url, title, lyrics, source="manual", sequence="", timeout=10):
+    """가사를 카탈로그에 저장(upsert)합니다."""
+    url = server_url.rstrip("/") + "/lyrics"
+    try:
+        response = requests.post(
+            url,
+            json={"title": title, "lyrics": lyrics, "source": source, "sequence": sequence},
+            timeout=(2, timeout),
+        )
+    except requests.RequestException as exc:
+        raise PptServerUnavailable(f"endpoint=/lyrics, 네트워크 오류: {exc}") from exc
+
+    if response.status_code in (404, 405):
+        raise PptServerEndpointUnavailable(
+            f"endpoint=/lyrics, 서버 오류 {response.status_code}"
+        )
+    if response.status_code >= 400:
+        raise PptServerResponseError(
+            f"endpoint=/lyrics, 서버 오류 {response.status_code}: {_response_detail(response)}",
+            status_code=response.status_code,
+        )
+

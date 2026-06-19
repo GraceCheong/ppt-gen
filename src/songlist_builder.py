@@ -329,6 +329,9 @@ def _export_via_com(pptx_path, png_path, long_edge_px=None):
                 try:
                     prs_com.Slides(1).Export(png_abs, "PNG", width_px, height_px)
                     if os.path.exists(png_abs):
+                        logging.getLogger(__name__).info(
+                            "[COM export] 성공: %dpx (long edge)", export_long_edge_px
+                        )
                         return
                 finally:
                     prs_com.Close()

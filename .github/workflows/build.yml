@@ -33,7 +33,7 @@ jobs:
 
       - name: Build release
         run: >
-          python scripts/build_release.py
+          python tools/release/build_release.py
           --version ${{ github.event.inputs.version || github.ref_name }}
           --force
 

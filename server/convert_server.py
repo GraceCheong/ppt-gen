@@ -58,6 +58,11 @@ def _history_db_path() -> str:
     return os.path.join(history_dir, "weekly_repertoire.db")
 
 
+def _normalize_lyrics_title(title: str) -> str:
+    """검색/중복 확인용 정규화 키 (소문자+공백 제거)."""
+    return title.strip().lower()
+
+
 def _init_history_db() -> None:
     db_path = _history_db_path()
     with sqlite3.connect(db_path) as conn:
@@ -74,6 +79,22 @@ def _init_history_db() -> None:
                 lyrics_font_size TEXT
             )
             """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lyrics_catalog (
+                title_key TEXT PRIMARY KEY,
+                display_title TEXT NOT NULL,
+                sequence TEXT NOT NULL DEFAULT '',
+                lyrics TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
+                created_at_utc TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_lyrics_catalog_display ON lyrics_catalog(display_title)"
         )
         conn.commit()
 
@@ -141,7 +162,126 @@ def _save_weekly_repertoire_snapshot(
     return week_end.isoformat()
 
 
-def _list_weekly_repertoire(year_from: int = 2026) -> list[dict]:
+def _index_lyrics_from_snapshot(
+    sequence_entries: list[tuple[str, str]],
+    lyrics_by_title: dict,
+) -> None:
+    """주간 스냅샷 저장 시 lyrics_catalog에 가사를 자동 색인합니다."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    sequence_map = {title: seq for title, seq in sequence_entries}
+
+    db_path = _history_db_path()
+    with sqlite3.connect(db_path) as conn:
+        for display_title, lyrics in lyrics_by_title.items():
+            if not display_title or not str(lyrics).strip():
+                continue
+            title_key = _normalize_lyrics_title(display_title)
+            sequence = sequence_map.get(display_title, "")
+            conn.execute(
+                """
+                INSERT INTO lyrics_catalog (
+                    title_key, display_title, sequence, lyrics, source,
+                    created_at_utc, updated_at_utc
+                ) VALUES (?, ?, ?, ?, 'history', ?, ?)
+                ON CONFLICT(title_key) DO UPDATE SET
+                    display_title = excluded.display_title,
+                    sequence = CASE
+                        WHEN excluded.sequence != '' THEN excluded.sequence
+                        ELSE lyrics_catalog.sequence
+                    END,
+                    lyrics = excluded.lyrics,
+                    source = CASE
+                        WHEN lyrics_catalog.source = 'manual' THEN 'manual'
+                        ELSE 'history'
+                    END,
+                    updated_at_utc = excluded.updated_at_utc
+                """,
+                (title_key, display_title, sequence, str(lyrics), now, now),
+            )
+        conn.commit()
+
+
+def _upsert_lyrics_catalog(
+    display_title: str,
+    lyrics: str,
+    source: str,
+    sequence: str = "",
+) -> None:
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    title_key = _normalize_lyrics_title(display_title)
+    db_path = _history_db_path()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO lyrics_catalog (
+                title_key, display_title, sequence, lyrics, source,
+                created_at_utc, updated_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(title_key) DO UPDATE SET
+                display_title = excluded.display_title,
+                sequence = CASE
+                    WHEN excluded.sequence != '' THEN excluded.sequence
+                    ELSE lyrics_catalog.sequence
+                END,
+                lyrics = excluded.lyrics,
+                source = excluded.source,
+                updated_at_utc = excluded.updated_at_utc
+            """,
+            (title_key, display_title, sequence, lyrics, source, now, now),
+        )
+        conn.commit()
+
+
+def _search_lyrics_catalog(query: str, limit: int = 10) -> list[dict]:
+    db_path = _history_db_path()
+    pattern = f"%{query.strip()}%"
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT display_title, sequence, lyrics, source, updated_at_utc
+            FROM lyrics_catalog
+            WHERE display_title LIKE ? OR title_key LIKE ?
+            ORDER BY updated_at_utc DESC
+            LIMIT ?
+            """,
+            (pattern, pattern.lower(), max(1, min(limit, 50))),
+        ).fetchall()
+    return [
+        {
+            "title": row["display_title"],
+            "sequence": row["sequence"],
+            "lyrics": row["lyrics"],
+            "source": row["source"],
+            "updated_at_utc": row["updated_at_utc"],
+        }
+        for row in rows
+    ]
+
+
+def _lookup_lyrics_by_title(title: str) -> dict | None:
+    title_key = _normalize_lyrics_title(title)
+    db_path = _history_db_path()
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT display_title, sequence, lyrics, source, updated_at_utc
+            FROM lyrics_catalog WHERE title_key = ?
+            """,
+            (title_key,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "title": row["display_title"],
+        "sequence": row["sequence"],
+        "lyrics": row["lyrics"],
+        "source": row["source"],
+        "updated_at_utc": row["updated_at_utc"],
+    }
+
+
     db_path = _history_db_path()
     min_date = datetime.date(year_from, 1, 1).isoformat()
 
@@ -426,7 +566,64 @@ def download_history_db():
     )
 
 
-@app.post("/client-error-report")
+@app.get("/lyrics/search")
+def search_lyrics(q: str = "", limit: int = 10):
+    """가사 카탈로그에서 곡명으로 검색합니다."""
+    if not q.strip():
+        raise HTTPException(400, detail="검색어(q)를 입력해 주세요.")
+    try:
+        results = _search_lyrics_catalog(q, limit=limit)
+    except Exception as e:
+        raise HTTPException(500, detail=f"가사 검색 실패: {e}")
+    return {"items": results, "query": q, "count": len(results)}
+
+
+@app.get("/lyrics/by-title")
+def get_lyrics_by_title(title: str = ""):
+    """정확한 곡명(정규화 키 기준)으로 가사를 조회합니다."""
+    if not title.strip():
+        raise HTTPException(400, detail="곡명(title)을 입력해 주세요.")
+    try:
+        result = _lookup_lyrics_by_title(title)
+    except Exception as e:
+        raise HTTPException(500, detail=f"가사 조회 실패: {e}")
+    if result is None:
+        raise HTTPException(404, detail=f"'{title}' 가사를 찾을 수 없습니다.")
+    return result
+
+
+@app.post("/lyrics")
+async def upsert_lyrics(request: Request):
+    """가사 카탈로그에 가사를 추가/수정합니다."""
+    try:
+        data = await request.json()
+    except Exception as e:
+        raise HTTPException(400, detail=f"JSON 형식이 올바르지 않습니다: {e}")
+
+    if not isinstance(data, dict):
+        raise HTTPException(400, detail="요청 본문은 JSON object여야 합니다.")
+
+    title = str(data.get("title") or "").strip()
+    lyrics = str(data.get("lyrics") or "").strip()
+    source = str(data.get("source") or "manual").strip()
+    sequence = str(data.get("sequence") or "").strip()
+
+    if not title:
+        raise HTTPException(400, detail="title은 필수입니다.")
+    if not lyrics:
+        raise HTTPException(400, detail="lyrics는 필수입니다.")
+    if source not in ("manual", "bugs", "history"):
+        source = "manual"
+
+    try:
+        _upsert_lyrics_catalog(title, lyrics, source, sequence=sequence)
+    except Exception as e:
+        raise HTTPException(500, detail=f"가사 저장 실패: {e}")
+
+    logger.info("[lyrics] upsert title=%s source=%s", title, source)
+    return {"status": "ok", "title": title, "source": source}
+
+
 async def client_error_report(request: Request):
     try:
         data = await request.json()
@@ -464,7 +661,7 @@ async def convert(file: UploadFile = File(...)):
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(_executor, _convert_sync, pptx_path, png_path)
         except Exception as e:
-            raise HTTPException(500, detail=f"변환 실패: {e}")
+            raise HTTPException(500, detail=f"변환 실패: [{type(e).__name__}] {e}")
 
         if not os.path.exists(png_path):
             raise HTTPException(500, detail="PNG 출력 파일을 찾을 수 없습니다.")
@@ -547,6 +744,7 @@ async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...
             lyrics_font_size=lyrics_font_size,
         )
         logger.info("[history] 주간 이력 저장 완료 week_end=%s", saved_week)
+        _index_lyrics_from_snapshot(sequence_entries, lyrics_by_title)
     except Exception as e:
         logger.warning("[history] 주간 이력 저장 실패: %s", e)
 
