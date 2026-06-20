@@ -9,7 +9,7 @@ from pathlib import Path
 
 APP_DIR_NAME = "PORR_atempo"
 RELEASE_DIR_NAME = "Release"
-VERSION_RE = re.compile(r"^v1\.0\.(\d+)$")
+VERSION_RE = re.compile(r"^v1\.1\.(\d+)$")
 SPEC_FILE_NAME = "LyricsToPPT.spec"
 
 ASSET_FILES = (
@@ -64,7 +64,7 @@ def next_release_version(release_dir: Path) -> str:
         next_patch = release_dirs[-1][0]
     else:
         next_patch = 0
-    return f"v1.0.{next_patch}"
+    return f"v1.1.{next_patch}"
 
 
 def build_artifact(root: Path) -> Path:

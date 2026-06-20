@@ -6,12 +6,15 @@
 
 ```text
 src/
-  main.py
+  main.py               # 배포 빌드 진입점 (레거시 UI)
+  main_ctk.py           # CustomTkinter UI (현재 메인 개발 대상)
+  main_ttk.py           # ttkbootstrap UI (대안)
   ppt_server_client.py
   ppt_service.py
   ppt_builder.py
   songlist_builder.py
   auto_lyrics_downloader.py
+  constants.py
 server/
   convert_server.py
   requirements.txt
@@ -21,9 +24,8 @@ tools/
   release/
     build_release.py
     LyricsToPPT.spec
-  agent/
 assets/
-  templates/template 2.pptx
+  templates/
   atempo.ico
   atempo.png
   logo.png
@@ -35,17 +37,36 @@ requirements.txt
 
 ## 개발 환경 설정
 
+### Python 버전
+
+- `main_ctk.py` / `main_ttk.py`: Python 3.10 필요 (`venv310`)
+- `main.py`: Python 3.9+ 가능
+
 ```powershell
+# Python 3.10 환경 (CTk/ttk UI)
+py -3.10 -m venv venv310
+.\venv310\Scripts\pip install -r requirements.txt
+
+# 기존 환경
 pip install -r requirements.txt
 ```
 
 ## 실행
 
 ```powershell
+# CustomTkinter UI (현재 메인)
+.\venv310\Scripts\python.exe src/main_ctk.py
+
+# ttkbootstrap UI
+.\venv310\Scripts\python.exe src/main_ttk.py
+
+# 레거시 UI
 python src/main.py
 ```
 
-Python으로 직접 실행할 때 PPT 서버 기본 주소는 `http://localhost:8010`입니다. 배포 실행 파일의 기본값은 `http://220.93.112.53:8010`입니다.
+PPT 서버 기본 주소:
+- 로컬 개발: `http://localhost:8010`
+- 배포 실행 파일: `http://porr.sccatempo.app`
 
 ## 빌드
 
@@ -56,7 +77,7 @@ pip install pyinstaller
 python tools/release/build_release.py
 ```
 
-출력: `Release/v1.0.X/LyricsToPPT-Windows-v1.0.X.zip`
+출력: `Release/v1.1.X/LyricsToPPT-Windows-v1.1.X.zip`
 
 이미 같은 버전의 zip이 있으면 오류가 납니다. 덮어쓰려면 `--force`를 추가합니다.
 
@@ -73,7 +94,19 @@ uvicorn server.convert_server:app --host 0.0.0.0 --port 8010
 
 포트:
 - PPT 서버: `8010`
-- GUI 클라이언트: 별도 listen 포트 없음 (Windows가 임시 포트 자동 할당)
+- GUI 클라이언트: 별도 listen 포트 없음
+
+### 주요 엔드포인트
+
+| 엔드포인트 | 설명 |
+|---|---|
+| `GET /health` | 서버 상태 및 COM 사용 가능 여부 |
+| `POST /generate-ppt` | 통합 PPT 생성 |
+| `POST /songlist-card` | 송리스트 카드 PNG 생성 |
+| `GET /lyrics/search` | 가사 DB 검색 |
+| `GET /lyrics/by-title` | 곡명으로 가사 조회 |
+| `POST /lyrics` | 가사 DB 저장/업데이트 |
+| `POST /client-error-report` | 클라이언트 오류 리포트 수신 |
 
 ### 로컬 fallback 순서
 
@@ -83,24 +116,33 @@ uvicorn server.convert_server:app --host 0.0.0.0 --port 8010
 2. LibreOffice
 3. 설치 안내 표시
 
-### 오류 리포트
-
-처리되지 않은 예외나 생성 실패 시 서버의 `/client-error-report`로 자동 전송합니다. 리포트에는 호출 함수, 파일/라인, 현재 설정값, 선택 템플릿, 서버 주소, 최근 로그 일부가 포함됩니다. 가사 본문과 레파토리 원문은 전송하지 않습니다. 서버는 수신한 리포트를 `out/error_reports/YYYY-MM-DD.jsonl`에 저장합니다.
-
 ## 템플릿 구조
 
 `assets/templates/`의 모든 `.pptx` 파일을 시작 시 드롭다운에 자동으로 불러옵니다. Google Drive 공유 폴더와 동기화되며, 새 템플릿이 있으면 다운로드 후 드롭다운을 갱신합니다.
 
-슬라이드 마스터에 아래 레이아웃이 있어야 합니다.
+슬라이드 마스터에 아래 레이아웃 이름이 있어야 합니다.
 
 ```text
-제목
-가사
+제목    ← 곡 제목 슬라이드
+가사    ← 가사 슬라이드
 ```
 
-## 로컬 산출물 정리 규칙
+가사 슬라이드는 텍스트 자리 표시자를 두 개 권장합니다. 프로그램은 면적이 가장 큰 자리 표시자를 가사 본문, 두 번째를 곡 제목으로 사용합니다.
 
-개발 중 생성되는 임시/검증 산출물은 `out/_agent/` 아래에 저장합니다.
+## 주요 상수 (`src/constants.py`)
 
-- 예: UI 캡처 이미지, 임시 점검 결과, 로컬 실험용 파일
-- 이 폴더와 기타 `out/` 산출물은 `.gitignore`로 GitHub 업로드 대상에서 제외됩니다.
+| 상수 | 기본값 | 설명 |
+|---|---|---|
+| `SERVER_PORT` | `8010` | 서버 포트 |
+| `LOCAL_SERVER_HOST` | `localhost` | 로컬 개발 주소 |
+| `RELEASE_SERVER_HOST` | `220.93.112.53` | 배포 서버 주소 |
+| `DEFAULT_MAX_LINES_PER_SLIDE` | `4` | 슬라이드당 최대 줄 수 |
+
+## 로컬 산출물
+
+| 경로 | 내용 |
+|---|---|
+| `out/integrated_lyrics.pptx` | 생성된 통합 PPT |
+| `out/error_reports/` | 클라이언트 오류 리포트 |
+| `out/template_previews/` | 템플릿 썸네일 캐시 |
+| `logs/service.log` | 서버 로그 (`.gitignore` 제외) |

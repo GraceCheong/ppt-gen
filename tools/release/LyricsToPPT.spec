@@ -3,7 +3,7 @@ import os as _os
 import sys as _sys
 
 _is_win = _sys.platform == "win32"
-_root = _os.path.abspath(_os.path.join(SPECPATH, '..'))
+_root = _os.path.abspath(_os.path.join(SPECPATH, '..', '..'))
 _icon_file = _os.path.join(_root, 'assets', 'atempo.ico' if _is_win else 'atempo.png')
 _hiddenimports = ['gdown']
 if _is_win:
