@@ -18,10 +18,15 @@ SONGLIST_TEMPLATE_FILE_NAME = f"{TEMPLATE_DIR_NAME}/songlist_template.pptx"
 SONGLIST_OUTPUT_FILE_NAME = "songlist_card.png"
 WEEKLY_HISTORY_CACHE_FILE_NAME = "weekly_repertoire_history_2026.json"
 WEEKLY_HISTORY_DB_FILE_NAME = "weekly_repertoire.db"
+SERVER_PORT = 8010
 LOCAL_SERVER_HOST = "localhost"
 RELEASE_SERVER_HOST = "porr.sccatempo.app"
 DEFAULT_SERVER_HOST = RELEASE_SERVER_HOST if getattr(sys, "frozen", False) else LOCAL_SERVER_HOST
-DEFAULT_SERVER_URL = f"http://{DEFAULT_SERVER_HOST}:{SERVER_PORT}"
+DEFAULT_SERVER_URL = (
+    f"http://{RELEASE_SERVER_HOST}"
+    if getattr(sys, "frozen", False)
+    else f"http://{LOCAL_SERVER_HOST}:{SERVER_PORT}"
+)
 DEFAULT_MAX_LINES_PER_SLIDE = 4
 DEFAULT_MAX_CHARS_PER_LINE = 18
 DEFAULT_LYRICS_FONT_SIZE = ""
