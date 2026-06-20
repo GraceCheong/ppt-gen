@@ -34,3 +34,6 @@ tools/agent/
 
 .venv/
 venv310/
+logs/
+
+*.tmp

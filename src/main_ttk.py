@@ -20,7 +20,6 @@ import tkinter.font as tkfont
 
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from ttkbootstrap.scrolled import ScrolledText, ScrolledFrame
 
 try:
     from PIL import Image, ImageTk
@@ -37,6 +36,8 @@ from ppt_server_client import (
     fetch_weekly_history_via_server,
     generate_pptx_via_server,
     generate_songlist_card_via_server,
+    list_recent_lyrics_catalog,
+    lookup_lyrics_by_title,
     search_lyrics_catalog,
 )
 from ppt_service import (
@@ -59,16 +60,65 @@ from constants import (
     SEQUENCE_GUIDE_TEXT, LYRICS_GUIDE_TEXT,
 )
 
-BRAND_ROSE = "#D63B6E"
+# ── App color palette ─────────────────────────────────────────────────────
+BG_APP      = "#D9E8FF"   # background — L=92.5%, clearly sky-blue
+MAIN_CLR    = "#AAD5FA"   # primary (sky blue)
+ACCENT_TEAL = "#89D5D9"   # teal (hover / secondary)
+ACCENT_MINT = "#84D3B6"   # mint (pressed / positive)
+ACCENT_LBUE = "#D9E2FF"   # lavender-blue (selection, row highlight)
+ACCENT_LAVD = "#E2DAFF"   # soft lavender (secondary selection)
+FG_APP      = "#0F1729"   # main text (near-black blue)
+FG_MUTED    = "#5A6880"   # muted text
+
+# Override constants imports with palette-matched values
+MUTED_FG    = FG_MUTED
+TEXT_FG     = FG_APP
+
+# Brand button aliases
+BRAND_COLOR = MAIN_CLR
+BRAND_PRESS = ACCENT_MINT
+BRAND_HOVER = ACCENT_TEAL
+BRAND_ROSE  = BRAND_COLOR  # legacy alias
+
+# ── Module-level dialog helpers ────────────────────────────────────────────
+_APP_ICO: str | None = None   # set by LyricsApp._configure_icon
+
+
+def _set_dialog_icon(win: tk.Toplevel) -> None:
+    if _APP_ICO and sys.platform == "win32":
+        try:
+            win.iconbitmap(_APP_ICO)
+        except Exception:
+            pass
+
+
+class _DialogBase(ttk.Toplevel):
+    """All modal popups inherit this: hidden until centered, app icon set."""
+    def __init__(self, parent, **kw):
+        super().__init__(parent, **kw)
+        self.configure(background=BG_APP)
+        self.withdraw()
+        self.transient(parent)
+        _set_dialog_icon(self)
+
+    def _show(self):
+        self.update_idletasks()
+        pw = self.master.winfo_width()
+        ph = self.master.winfo_height()
+        px = self.master.winfo_rootx()
+        py = self.master.winfo_rooty()
+        w  = self.winfo_width()
+        h  = self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+        self.deiconify()
 
 
 # ─── Multiline dialog ──────────────────────────────────────────────────────
-class MultilineDialog(ttk.Toplevel):
+class MultilineDialog(_DialogBase):
     def __init__(self, parent, title: str, prompt: str, initial_text: str = ""):
         super().__init__(parent)
         self.title(title)
         self.geometry("520x400")
-        self.transient(parent)
         self.grab_set()
         self.result: str | None = None
 
@@ -76,19 +126,33 @@ class MultilineDialog(ttk.Toplevel):
         self.rowconfigure(1, weight=1)
 
         if prompt:
-            ttk.Label(self, text=prompt, wraplength=480,
-                      foreground=MUTED_FG).grid(row=0, column=0, sticky=EW, padx=16, pady=(14, 6))
+            tk.Label(self, text=prompt, wraplength=480,
+                     fg=MUTED_FG).grid(row=0, column=0, sticky=EW, padx=16, pady=(14, 6))
 
-        self._text = ScrolledText(self, autohide=True, height=10)
-        self._text.grid(row=1, column=0, sticky=NSEW, padx=16, pady=(0, 8))
+        tf = tk.Frame(self)
+        tf.grid(row=1, column=0, sticky=NSEW, padx=16, pady=(0, 8))
+        tf.columnconfigure(0, weight=1)
+        tf.rowconfigure(0, weight=1)
+        self._text = tk.Text(tf, height=10, wrap=WORD, font=("맑은 고딕", 11),
+                             bg=BG_APP, insertbackground=MAIN_CLR,
+                             relief=FLAT, highlightthickness=1,
+                             highlightbackground=ACCENT_LBUE, highlightcolor=MAIN_CLR)
+        _ts = ttk.Scrollbar(tf, orient=VERTICAL, command=self._text.yview,
+                            style="Slim.Vertical.TScrollbar")
+        self._text.configure(yscrollcommand=_ts.set)
+        self._text.grid(row=0, column=0, sticky=NSEW)
+        _ts.grid(row=0, column=1, sticky=NS)
         if initial_text:
             self._text.insert(END, initial_text)
 
-        btn_row = ttk.Frame(self)
+        btn_row = tk.Frame(self)
         btn_row.grid(row=2, column=0, sticky=EW, padx=16, pady=(0, 14))
-        ttk.Button(btn_row, text="취소", command=self.destroy, bootstyle=SECONDARY).pack(side=RIGHT, padx=(4, 0))
-        ttk.Button(btn_row, text="확인", command=self._accept, bootstyle=PRIMARY).pack(side=RIGHT)
+        ttk.Button(btn_row, text="취소", command=self.destroy,
+                   bootstyle=OUTLINE, padding=(10, 5)).pack(side=RIGHT, padx=(4, 0))
+        ttk.Button(btn_row, text="확인", command=self._accept,
+                   bootstyle=PRIMARY, padding=(10, 5)).pack(side=RIGHT)
 
+        self.after(0, self._show)
         self.wait_window(self)
 
     def _accept(self):
@@ -97,44 +161,117 @@ class MultilineDialog(ttk.Toplevel):
 
 
 # ─── Lyrics search dialog ──────────────────────────────────────────────────
-class LyricsSearchDialog(ttk.Toplevel):
+class LyricsSearchDialog(_DialogBase):
     _DEBOUNCE_MS = 300
 
-    def __init__(self, parent, server_url: str):
+    def __init__(self, parent, server_url: str,
+                 preloaded: list[dict] | None = None,
+                 on_refreshed=None):
+        """
+        preloaded  — cached list from app startup; skips network call if provided.
+        on_refreshed — callback(list[dict]) called after user presses refresh.
+        """
         super().__init__(parent)
         self.title("가사 DB 검색")
-        self.geometry("560x480")
-        self.transient(parent)
+        self.geometry("560x500")
         self.grab_set()
         self.result: dict | None = None
         self._server_url = server_url
+        self._preloaded = preloaded
+        self._on_refreshed = on_refreshed
         self._debounce_id = None
         self._results: list[dict] = []
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
-        bar = ttk.Frame(self)
+        # ── Search bar + refresh button
+        bar = tk.Frame(self)
         bar.grid(row=0, column=0, sticky=EW, padx=16, pady=(14, 6))
         bar.columnconfigure(0, weight=1)
 
         self._search_var = tk.StringVar()
         ttk.Entry(bar, textvariable=self._search_var,
-                  bootstyle=PRIMARY).grid(row=0, column=0, sticky=EW)
+                  bootstyle=PRIMARY).grid(row=0, column=0, sticky=EW, padx=(0, 8))
         self._search_var.trace_add("write", self._on_query_changed)
 
-        self._list_frame = ScrolledFrame(self, autohide=True)
-        self._list_frame.grid(row=1, column=0, sticky=NSEW, padx=16, pady=(0, 8))
+        _ri = getattr(parent, "_get_icon", lambda _: None)("refresh")
+        self._refresh_btn = ttk.Button(
+            bar, image=_ri, text="" if _ri else "↻",
+            width=0 if _ri else 3,
+            bootstyle=OUTLINE,
+            command=self._force_refresh)
+        self._refresh_btn.grid(row=0, column=1)
 
-        self._status_label = ttk.Label(self._list_frame, text="검색어를 입력하면 결과가 표시됩니다.",
-                                       foreground=MUTED_FG)
+        # ── Result list
+        _lf_outer = tk.Frame(self)
+        _lf_outer.grid(row=1, column=0, sticky=NSEW, padx=16, pady=(0, 8))
+        _lf_outer.columnconfigure(0, weight=1)
+        _lf_outer.rowconfigure(0, weight=1)
+        _lf_canvas = tk.Canvas(_lf_outer, highlightthickness=0, bg=BG_APP)
+        _lf_vs = ttk.Scrollbar(_lf_outer, orient=VERTICAL, command=_lf_canvas.yview,
+                               style="Slim.Vertical.TScrollbar")
+        self._list_frame = tk.Frame(_lf_canvas, bg=BG_APP)
+        _lf_win = _lf_canvas.create_window((0, 0), window=self._list_frame, anchor=NW)
+        self._list_frame.bind("<Configure>", lambda e: (
+            _lf_canvas.configure(scrollregion=_lf_canvas.bbox("all")),
+            _lf_canvas.itemconfigure(_lf_win, width=_lf_canvas.winfo_width()),
+        ))
+        _lf_canvas.configure(yscrollcommand=_lf_vs.set)
+        _lf_canvas.grid(row=0, column=0, sticky=NSEW)
+        _lf_vs.grid(row=0, column=1, sticky=NS)
+
+        self._status_label = tk.Label(self._list_frame, text="불러오는 중…",
+                                      bg=BG_APP, fg=MUTED_FG)
         self._status_label.pack(anchor=W, padx=8, pady=8)
 
         ttk.Button(self, text="닫기", command=self.destroy,
-                   bootstyle=SECONDARY).grid(row=2, column=0, sticky=E, padx=16, pady=(0, 14))
+                   bootstyle=SECONDARY, padding=(10, 5)).grid(
+            row=2, column=0, sticky=E, padx=16, pady=(0, 14))
 
-        self.after(100, lambda: self.focus_set())
+        self.after(0, self._show)
+        self.after(50, self.focus_set)
+        # Use cache immediately if available, otherwise fetch from server
+        if self._preloaded is not None:
+            self.after(30, lambda: self._render_results(self._preloaded, header="최근 추가순"))
+        else:
+            self.after(60, self._load_recent)
         self.wait_window(self)
+
+    def _force_refresh(self):
+        """User clicked refresh — fetch fresh data and update app cache."""
+        self._refresh_btn.configure(state=DISABLED)
+        self._show_status("새로고침 중…")
+        threading.Thread(target=self._fetch_and_refresh, daemon=True).start()
+
+    def _fetch_and_refresh(self):
+        try:
+            items = list_recent_lyrics_catalog(self._server_url, limit=50)
+        except (PptServerUnavailable, PptServerEndpointUnavailable):
+            self.after(0, lambda: self._show_status("서버에 연결할 수 없습니다."))
+        except Exception as e:
+            self.after(0, lambda: self._show_status(f"오류: {e}"))
+        else:
+            if self._on_refreshed:
+                self.after(0, lambda r=items: self._on_refreshed(r))
+            self.after(0, lambda r=items: self._render_results(r, header="최근 추가순"))
+        finally:
+            self.after(0, lambda: self._refresh_btn.configure(state=NORMAL) if self._alive() else None)
+
+    def _load_recent(self):
+        self._show_status("불러오는 중…")
+        threading.Thread(target=self._fetch_recent, daemon=True).start()
+
+    def _fetch_recent(self):
+        try:
+            items = list_recent_lyrics_catalog(self._server_url, limit=50)
+        except (PptServerUnavailable, PptServerEndpointUnavailable):
+            self.after(0, lambda: self._show_status("서버에 연결할 수 없습니다."))
+            return
+        except Exception as e:
+            self.after(0, lambda: self._show_status(f"목록 조회 오류: {e}"))
+            return
+        self.after(0, lambda r=items: self._render_results(r, header="최근 추가순"))
 
     def _on_query_changed(self, *_):
         if self._debounce_id:
@@ -147,7 +284,7 @@ class LyricsSearchDialog(ttk.Toplevel):
     def _do_search(self):
         query = self._search_var.get().strip()
         if not query:
-            self._show_status("검색어를 입력하면 결과가 표시됩니다.")
+            self._load_recent()
             return
         self._show_status("검색 중…")
         threading.Thread(target=self._fetch_results, args=(query,), daemon=True).start()
@@ -163,25 +300,36 @@ class LyricsSearchDialog(ttk.Toplevel):
             return
         self.after(0, lambda r=items: self._render_results(r))
 
+    def _alive(self) -> bool:
+        try:
+            return self.winfo_exists() and self._list_frame.winfo_exists()
+        except Exception:
+            return False
+
     def _show_status(self, msg: str):
+        if not self._alive():
+            return
         for child in self._list_frame.winfo_children():
             child.destroy()
         ttk.Label(self._list_frame, text=msg, foreground=MUTED_FG).pack(anchor=W, padx=8, pady=8)
 
-    def _render_results(self, items: list[dict]):
+    def _render_results(self, items: list[dict], header: str | None = None):
+        if not self._alive():
+            return
         for child in self._list_frame.winfo_children():
             child.destroy()
         if not items:
             self._show_status("검색 결과가 없습니다.")
             return
+        if header:
+            ttk.Label(self._list_frame, text=header, foreground=MUTED_FG,
+                      font=("Segoe UI", 9)).pack(anchor=W, padx=8, pady=(6, 2))
         for item in items:
             self._build_result_row(item)
 
     def _build_result_row(self, item: dict):
         title = str(item.get("title") or "")
         sequence = str(item.get("sequence") or "")
-        source = str(item.get("source") or "")
-        badge = {"bugs": "🌐 Bugs", "manual": "✏️ 직접", "history": "📅 이력"}.get(source, source)
 
         row = ttk.Frame(self._list_frame, relief=SOLID, borderwidth=1)
         row.pack(fill=X, padx=6, pady=(0, 6))
@@ -189,7 +337,7 @@ class LyricsSearchDialog(ttk.Toplevel):
         ttk.Label(row, text=title, font=("맑은 고딕", 11, "bold")).grid(
             row=0, column=0, sticky=EW, padx=10, pady=(8, 2))
         info = sequence if sequence else "(진행 순서 없음)"
-        ttk.Label(row, text=f"{info}  [{badge}]", foreground=MUTED_FG,
+        ttk.Label(row, text=info, foreground=MUTED_FG,
                   font=("맑은 고딕", 10)).grid(row=1, column=0, sticky=EW, padx=10, pady=(0, 8))
         ttk.Button(row, text="추가", bootstyle=PRIMARY,
                    command=lambda i=item: self._select(i)).grid(
@@ -201,34 +349,115 @@ class LyricsSearchDialog(ttk.Toplevel):
         self.destroy()
 
 
+# ─── PPT settings dialog ───────────────────────────────────────────────────
+class PPTSettingsDialog(_DialogBase):
+    def __init__(self, parent, max_lines_var: tk.StringVar,
+                 max_chars_var: tk.StringVar, font_size_var: tk.StringVar):
+        super().__init__(parent)
+        self.title("PPT 상세 설정")
+        self.resizable(False, False)
+        self.grab_set()
+        self.confirmed = False
+
+        self._out_max_lines = max_lines_var
+        self._out_max_chars = max_chars_var
+        self._out_font_size = font_size_var
+
+        self._max_lines = tk.StringVar(value=max_lines_var.get())
+        self._max_chars = tk.StringVar(value=max_chars_var.get())
+        self._font_size = tk.StringVar(value=font_size_var.get())
+
+        content = tk.Frame(self)
+        content.pack(fill=BOTH, expand=True, padx=24, pady=20)
+        content.columnconfigure(1, weight=1)
+
+        def row(r, label, var):
+            tk.Label(content, text=label, font=("Segoe UI", 11)).grid(
+                row=r, column=0, sticky=E, padx=(0, 12), pady=6)
+            ttk.Entry(content, textvariable=var, width=10,
+                      bootstyle=SECONDARY, justify=CENTER).grid(
+                row=r, column=1, sticky=W, pady=6)
+
+        row(0, "슬라이드별 최대 줄 수", self._max_lines)
+        row(1, "줄별 최대 글자 수", self._max_chars)
+        row(2, "가사 크기 (기본: 비워두기)", self._font_size)
+
+        btn_row = tk.Frame(self)
+        btn_row.pack(fill=X, padx=24, pady=(0, 16))
+        ttk.Button(btn_row, text="취소", bootstyle=OUTLINE, padding=(10, 5),
+                   command=self.destroy).pack(side=RIGHT, padx=(6, 0))
+        ttk.Button(btn_row, text="확인", bootstyle=PRIMARY, padding=(10, 5),
+                   command=self._accept).pack(side=RIGHT)
+
+        self.after(0, self._show)
+        self.wait_window(self)
+
+    def _accept(self):
+        self._out_max_lines.set(self._max_lines.get())
+        self._out_max_chars.set(self._max_chars.get())
+        self._out_font_size.set(self._font_size.get())
+        self.confirmed = True
+        self.destroy()
+
+
+# ─── Server settings dialog ────────────────────────────────────────────────
+class ServerSettingsDialog(_DialogBase):
+    def __init__(self, parent, server_url_var: tk.StringVar):
+        super().__init__(parent)
+        self.title("서버 설정")
+        self.resizable(False, False)
+        self.grab_set()
+
+        self._out = server_url_var
+        self._var = tk.StringVar(value=server_url_var.get())
+
+        content = tk.Frame(self)
+        content.pack(fill=BOTH, expand=True, padx=24, pady=20)
+        content.columnconfigure(1, weight=1)
+
+        tk.Label(content, text="PPT 서버 URL", font=("Segoe UI", 11)).grid(
+            row=0, column=0, sticky=E, padx=(0, 12), pady=6)
+        ttk.Entry(content, textvariable=self._var, width=30,
+                  bootstyle=SECONDARY).grid(row=0, column=1, sticky=EW, pady=6)
+
+        btn_row = tk.Frame(self)
+        btn_row.pack(fill=X, padx=24, pady=(0, 16))
+        ttk.Button(btn_row, text="취소", bootstyle=OUTLINE, padding=(10, 5),
+                   command=self.destroy).pack(side=RIGHT, padx=(6, 0))
+        ttk.Button(btn_row, text="확인", bootstyle=PRIMARY, padding=(10, 5),
+                   command=self._accept).pack(side=RIGHT)
+
+        self.after(0, self._show)
+        self.wait_window(self)
+
+    def _accept(self):
+        self._out.set(self._var.get().strip())
+        self.destroy()
+
+
 # ─── Busy dialog ───────────────────────────────────────────────────────────
-class BusyDialog(ttk.Toplevel):
+class BusyDialog(_DialogBase):
     def __init__(self, parent, title: str, message: str, on_cancel=None):
         super().__init__(parent)
         self.title(title)
         self.geometry("360x150")
         self.resizable(False, False)
-        self.transient(parent)
+        self.grab_set()
         self._on_cancel = on_cancel
         self.protocol("WM_DELETE_WINDOW", self.on_cancel if on_cancel else lambda: None)
 
-        content = ttk.Frame(self)
+        content = tk.Frame(self)
         content.pack(fill=BOTH, expand=True, padx=14, pady=14)
 
-        self._msg_label = ttk.Label(content, text=message, wraplength=300, justify=CENTER,
-                                    font=("맑은 고딕", 12, "bold"))
+        self._msg_label = tk.Label(content, text=message, wraplength=300, justify=CENTER,
+                                   font=("맑은 고딕", 12, "bold"))
         self._msg_label.pack(pady=(4, 10))
 
-        self._progress = ttk.Progressbar(content, mode=INDETERMINATE, bootstyle="danger-striped")
+        self._progress = ttk.Progressbar(content, mode=INDETERMINATE, bootstyle="info-striped")
         self._progress.pack(fill=X, padx=8, pady=(0, 8))
         self._progress.start(10)
 
-        self.update_idletasks()
-        px, py = parent.winfo_rootx(), parent.winfo_rooty()
-        pw, ph = parent.winfo_width(), parent.winfo_height()
-        x = px + (pw - self.winfo_width()) // 2
-        y = py + (ph - self.winfo_height()) // 2
-        self.geometry(f"+{max(0,x)}+{max(0,y)}")
+        self._show()
 
     def set_message(self, message: str):
         self._msg_label.configure(text=message)
@@ -281,6 +510,8 @@ class LyricsApp(ttk.Window):
         self.weekly_history_items: list = []
         self._loaded_history_lyrics_by_title: dict = {}
         self.repertoire_entries: list = []
+        self._undo_stack: list = []   # list of (repertoire_entries snapshot, lyrics_store snapshot)
+        self._redo_stack: list = []
         self._busy_dialog: BusyDialog | None = None
         self.song_buttons: list = []
         self.selected_song_index: int | None = None
@@ -288,21 +519,31 @@ class LyricsApp(ttk.Window):
 
         self.brand_font_family = self._resolve_font_family(BRAND_FONT_CANDIDATES)
 
-        self._create_widgets()
         self._apply_styles()
+        self._load_icons()
+        self._create_widgets()
+        self.configure(background=BG_APP)
 
         self.load_local_weekly_history()
         self.render_weekly_history_accordion()
         self.after(500, self.sync_weekly_history_from_server_async)
         self.refresh_template_options()
         self.after(300, self.ensure_templates_async)
+        # Preload DB catalog cache once at startup
+        self._db_catalog_cache: list[dict] = []
+        self._db_cache_ready = False
+        self.after(800, self._preload_db_cache)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.bind_all("<Control-z>", lambda e: self.undo_repertoire())
+        self.bind_all("<Control-y>", lambda e: self.redo_repertoire())
 
     def _configure_icon(self):
+        global _APP_ICO
         ico = self.find_asset_file(ICON_ICO_FILE_NAME)
         if ico and sys.platform == "win32":
             try:
                 self.iconbitmap(ico)
+                _APP_ICO = ico
                 return
             except Exception:
                 pass
@@ -321,15 +562,100 @@ class LyricsApp(ttk.Window):
                 return c
         return "맑은 고딕"
 
+    def _load_icons(self):
+        from PIL import Image, ImageTk
+        icon_dir = os.path.join(self.base_dir, "assets", "icons")
+        self._icons: dict = {}
+        for name in ("edit", "trash", "refresh", "download", "plus", "search"):
+            path = os.path.join(icon_dir, f"{name}.png")
+            if os.path.exists(path):
+                img = Image.open(path).convert("RGBA").resize((16, 16), Image.LANCZOS)
+                self._icons[name] = ImageTk.PhotoImage(img)
+
+    def _get_icon(self, name: str):
+        return self._icons.get(name)
+
     def _apply_styles(self):
+        # ── Tk option database — native tk widgets inherit these without explicit bg=
+        self.option_add("*Background",       BG_APP)
+        self.option_add("*Foreground",       FG_APP)
+        self.option_add("*activeBackground", ACCENT_LBUE)
+        self.option_add("*activeForeground", FG_APP)
+        self.option_add("*selectBackground", ACCENT_LBUE)
+        self.option_add("*selectForeground", FG_APP)
+
         s = ttk.Style()
-        # Make primary/danger buttons use Brand Rose
+
+        # ── Global TTK background
+        s.configure(".", background=BG_APP, foreground=FG_APP, font=("Segoe UI", 10))
+        for w in ("TFrame", "TLabel", "TLabelframe", "TLabelframe.Label",
+                  "TMenubutton", "TCheckbutton", "TRadiobutton"):
+            try:
+                s.configure(w, background=BG_APP, foreground=FG_APP)
+            except Exception:
+                pass
+
+        # ── Unified widget height — all interactive widgets in same row share padding
+        _BTN_PAD = (10, 5)   # standard button padding  (used everywhere)
+        _BTN_PAD_PRI = (14, 7)  # primary action buttons (action bar)
+        # Store as instance attrs so widget-creation methods can reference them
+        self._btn_pad     = _BTN_PAD
+        self._btn_pad_pri = _BTN_PAD_PRI
+        # Force Combobox to the same height as a button with _BTN_PAD vertical
+        s.configure("TCombobox", padding=(4, 4))
+
+        # ── Brand action button
         s.configure("Brand.TButton",
-                     background=BRAND_ROSE, foreground="white",
-                     font=("Segoe UI", 12, "bold"))
+                    background=MAIN_CLR, foreground=FG_APP,
+                    font=("Segoe UI", 12, "bold"), relief=FLAT, borderwidth=0,
+                    padding=_BTN_PAD_PRI)
         s.map("Brand.TButton",
-              background=[("active", "#b82d5a"), ("disabled", "#d68fa6")],
-              foreground=[("disabled", "white")])
+              background=[("active", ACCENT_TEAL), ("pressed", ACCENT_MINT),
+                          ("disabled", "#cce7fa")],
+              foreground=[("disabled", FG_MUTED)])
+
+        # ── Pressed flash style
+        s.configure("BrandPress.TButton",
+                    background=ACCENT_MINT, foreground=FG_APP,
+                    font=("Segoe UI", 12, "bold"), relief=FLAT, borderwidth=0,
+                    padding=_BTN_PAD_PRI)
+        s.map("BrandPress.TButton",
+              background=[("active", ACCENT_MINT)])
+
+        # ── Ghost scrollbar — fully invisible idle, teal thumb on hover
+        for orient in ("Vertical", "Horizontal"):
+            name = f"Slim.{orient}.TScrollbar"
+            s.configure(name, width=6, arrowsize=0, relief=FLAT,
+                        borderwidth=0, bordercolor=BG_APP,
+                        lightcolor=BG_APP, darkcolor=BG_APP,
+                        troughcolor=BG_APP, background=BG_APP,
+                        groovewidth=0)
+            s.map(name,
+                  background=[("active", ACCENT_TEAL), ("pressed", ACCENT_MINT)],
+                  troughcolor=[("active", BG_APP)])
+
+    def _finalize_outline_styles(self):
+        """Re-apply BG_APP to Outline.TButton after ttkbootstrap widget-init overrides."""
+        s = ttk.Style()
+        for pfx in ("", "primary.", "secondary.", "info.",
+                    "success.", "warning.", "danger.", "light.", "dark."):
+            for sfx in ("Outline.TButton", "Outline.Toolbutton", "Outline.TMenubutton"):
+                name = f"{pfx}{sfx}"
+                try:
+                    s.configure(name, background=BG_APP)
+                    s.map(name, background=[
+                        ("active",   ACCENT_LBUE),
+                        ("pressed",  ACCENT_MINT),
+                        ("disabled", BG_APP),
+                    ])
+                except Exception:
+                    pass
+        # Also fix plain TMenubutton (non-outline)
+        try:
+            s.configure("TMenubutton", background=BG_APP)
+            s.map("TMenubutton", background=[("active", ACCENT_LBUE), ("pressed", ACCENT_MINT)])
+        except Exception:
+            pass
 
     # ── Widget creation ────────────────────────────────────────────────
     def _create_widgets(self):
@@ -345,20 +671,22 @@ class LyricsApp(ttk.Window):
         # ── Action bar
         self._create_action_bar()
 
+        # ttkbootstrap creates Outline.TButton styles at widget instantiation,
+        # overriding _apply_styles(). Re-apply BG_APP after all widgets exist.
+        self._finalize_outline_styles()
+
     def _create_top_bar(self):
-        top = ttk.Frame(self)
-        top.grid(row=0, column=0, sticky=EW, padx=40, pady=(18, 10))
+        top = tk.Frame(self)
+        top.grid(row=0, column=0, sticky=EW, padx=20, pady=(12, 6))
         top.columnconfigure(0, weight=1)
 
-        # Brand (left)
-        brand = ttk.Frame(top)
+        brand = tk.Frame(top)
         brand.grid(row=0, column=0, sticky=W)
         self._create_logo_label(brand).pack(anchor=W)
-        ttk.Label(brand, text="레파토리와 가사를 정리해 파워포인트로 만듭니다.",
-                  foreground=MUTED_FG, font=("Segoe UI", 10)).pack(anchor=W, pady=(6, 0))
+        tk.Label(brand, text="레파토리와 가사를 정리해 파워포인트로 만듭니다.",
+                 fg=MUTED_FG, font=("Segoe UI", 10)).pack(anchor=W, pady=(6, 0))
 
-        # Right panel (menus + settings)
-        right = ttk.Frame(top)
+        right = tk.Frame(top)
         right.grid(row=0, column=1, sticky=NE)
 
         self._create_menu_bar(right)
@@ -383,13 +711,15 @@ class LyricsApp(ttk.Window):
                          font=(self.brand_font_family, 24, "bold"))
 
     def _create_menu_bar(self, parent):
-        bar = ttk.Frame(parent)
+        bar = tk.Frame(parent)
         bar.pack(anchor=E, fill=X)
 
         def menu_btn(title, items):
-            mb = ttk.Menubutton(bar, text=f"{title} ▾", bootstyle=OUTLINE)
+            mb = ttk.Menubutton(bar, text=title, bootstyle=OUTLINE, padding=(10, 5))
             mb.pack(side=RIGHT, padx=(4, 0))
-            m = tk.Menu(mb, tearoff=0)
+            m = tk.Menu(mb, tearoff=0, bg=BG_APP, fg=FG_APP,
+                        activebackground=ACCENT_LBUE, activeforeground=FG_APP,
+                        relief=FLAT, borderwidth=1)
             mb.configure(menu=m)
             for label, cmd in items:
                 if label == "-":
@@ -403,8 +733,14 @@ class LyricsApp(ttk.Window):
             ("로그 첨부 버그 리포트", self.report_bug_with_logs),
         ])
         menu_btn("도구", [
-            ("레파토리 입력하기", self.open_repertoire_input_dialog),
-            ("레파토리 인식", lambda: self.refresh_song_list(trigger_download=True)),
+            ("레파토리 입력", self.open_repertoire_input_dialog),
+            ("전체 가사 가져오기", lambda: self.refresh_song_list(trigger_download=True)),
+            ("-", None),
+            ("PPT 상세 설정", self.open_ppt_settings),
+            ("서버 설정", self.open_server_settings),
+            ("-", None),
+            ("작업 뒤로가기  Ctrl+Z", self.undo_repertoire),
+            ("작업 앞으로가기  Ctrl+Y", self.redo_repertoire),
         ])
         menu_btn("파일", [
             ("작업 로그 다운로드", self.download_work_log),
@@ -413,116 +749,153 @@ class LyricsApp(ttk.Window):
         ])
 
     def _create_settings_area(self, parent):
-        frame = ttk.Frame(parent)
+        # StringVars initialized here so they're accessible throughout the app
+        self.max_lines_var = tk.StringVar(value=str(DEFAULT_MAX_LINES_PER_SLIDE))
+        self.max_chars_var = tk.StringVar(value=str(DEFAULT_MAX_CHARS_PER_LINE))
+        self.lyrics_font_size_var = tk.StringVar(value=DEFAULT_LYRICS_FONT_SIZE or "기본")
+
+        frame = tk.Frame(parent)
         frame.pack(anchor=E, fill=X, pady=(8, 0))
+        frame.columnconfigure(0, weight=1)
 
         def lbl(f, text, r, c):
-            ttk.Label(f, text=text, font=("Segoe UI", 11, "bold")).grid(
+            tk.Label(f, text=text, font=("Segoe UI", 11, "bold")).grid(
                 row=r, column=c, sticky=E, padx=(0, 6), pady=3)
-
-        lbl(frame, "설정", 0, 0)
-        lbl(frame, "슬라이드별 최대 줄 수", 0, 1)
-        self.max_lines_var = tk.StringVar(value=str(DEFAULT_MAX_LINES_PER_SLIDE))
-        ttk.Entry(frame, textvariable=self.max_lines_var, width=8,
-                  bootstyle=SECONDARY, justify=CENTER).grid(row=0, column=2, padx=(0, 12), pady=3)
-
-        lbl(frame, "줄별 최대 글자 수", 1, 1)
-        self.max_chars_var = tk.StringVar(value=str(DEFAULT_MAX_CHARS_PER_LINE))
-        ttk.Entry(frame, textvariable=self.max_chars_var, width=8,
-                  bootstyle=SECONDARY, justify=CENTER).grid(row=1, column=2, padx=(0, 12), pady=3)
-
-        lbl(frame, "가사 크기", 2, 1)
-        self.lyrics_font_size_var = tk.StringVar(value=DEFAULT_LYRICS_FONT_SIZE or "기본")
-        ttk.Entry(frame, textvariable=self.lyrics_font_size_var, width=8,
-                  bootstyle=SECONDARY, justify=CENTER).grid(row=2, column=2, padx=(0, 12), pady=3)
 
         lbl(frame, "템플릿", 0, 3)
         self.template_var = tk.StringVar(value="")
         self.template_combo = ttk.Combobox(frame, textvariable=self.template_var,
-                                            state="readonly", width=22, bootstyle=SECONDARY)
-        self.template_combo.grid(row=0, column=4, padx=(0, 4), pady=3)
+                                            state="readonly", width=20, bootstyle=SECONDARY)
+        self.template_combo.grid(row=0, column=4, padx=(0, 4), pady=2)
         self.template_combo.bind("<<ComboboxSelected>>", lambda e: self.update_template_preview())
 
-        self.template_refresh_btn = ttk.Button(frame, text="↻", width=3,
-                                               bootstyle=OUTLINE,
-                                               command=lambda: self.ensure_templates_async(force=True))
-        self.template_refresh_btn.grid(row=0, column=5, padx=(0, 8), pady=3)
+        _ri = self._get_icon("refresh")
+        self.template_refresh_btn = ttk.Button(
+            frame, image=_ri, text="" if _ri else "↻", width=0 if _ri else 3,
+            bootstyle=OUTLINE, padding=(6, 5),
+            command=lambda: self.ensure_templates_async(force=True))
+        self.template_refresh_btn.grid(row=0, column=5, padx=(0, 4), pady=2)
 
-        lbl(frame, "PPT 서버", 1, 3)
         self.server_url_var = tk.StringVar(value=DEFAULT_SERVER_URL)
-        ttk.Entry(frame, textvariable=self.server_url_var, width=24,
-                  bootstyle=SECONDARY).grid(row=1, column=4, columnspan=2, padx=(0, 8), pady=3)
 
     def _create_workspace(self):
-        workspace = ttk.Frame(self)
-        workspace.grid(row=1, column=0, sticky=NSEW, padx=28, pady=(0, 8))
-        workspace.columnconfigure(0, weight=4)
-        workspace.columnconfigure(1, weight=5)
-        workspace.rowconfigure(0, weight=1)
+        workspace = tk.Frame(self)
+        workspace.grid(row=1, column=0, sticky=NSEW, padx=20, pady=(0, 6))
+        workspace.columnconfigure(0, weight=4, minsize=280)
+        workspace.columnconfigure(1, weight=5, minsize=360)
+        workspace.rowconfigure(0, weight=1, minsize=300)
 
         self._create_sequence_panel(workspace)
         self._create_lyrics_panel(workspace)
 
     def _create_sequence_panel(self, parent):
-        frame = ttk.LabelFrame(parent, text="  레파토리 입력  ", bootstyle=PRIMARY,
-                               padding=10)
-        frame.grid(row=0, column=0, sticky=NSEW, padx=(0, 8))
+        frame = tk.LabelFrame(parent, text="  레파토리 입력  ", padx=8, pady=8,
+                              font=("Segoe UI", 11, "bold"),
+                              bg=BG_APP, fg=FG_APP)
+        frame.grid(row=0, column=0, sticky=NSEW, padx=(0, 6))
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(3, weight=1)
+        frame.rowconfigure(0, weight=0)   # button bar
+        frame.rowconfigure(1, weight=0)   # hint text
+        frame.rowconfigure(2, weight=1, minsize=150)  # scroll area
+        frame.rowconfigure(3, weight=0)   # reset button
 
-        # Buttons
-        btn_row = ttk.Frame(frame)
-        btn_row.grid(row=0, column=0, sticky=EW, pady=(0, 6))
-        ttk.Button(btn_row, text="레파토리 입력하기", bootstyle=OUTLINE,
-                   command=self.open_repertoire_input_dialog).pack(side=LEFT, padx=(0, 6))
-        ttk.Button(btn_row, text="🔍 DB에서 추가", bootstyle=OUTLINE,
-                   command=self.open_lyrics_search_dialog).pack(side=LEFT, padx=(0, 6))
-        self.repertoire_summary_var = tk.StringVar(value="입력된 레파토리 없음")
-        ttk.Label(btn_row, textvariable=self.repertoire_summary_var,
-                  foreground=MUTED_FG, font=("맑은 고딕", 10)).pack(side=LEFT, padx=4)
+        # Row 0: buttons
+        btn_row = tk.Frame(frame)
+        btn_row.grid(row=0, column=0, sticky=EW, pady=(0, 2))
+        _BTN = {"bootstyle": OUTLINE, "padding": (10, 5)}
+        ttk.Button(btn_row, text="레파토리 입력", command=self.open_repertoire_input_dialog,
+                   **_BTN).pack(side=LEFT, padx=(0, 6))
+        _si = self._get_icon("search")
+        ttk.Button(btn_row, image=_si, text="DB 검색", compound=LEFT if _si else "none",
+                   command=self.open_lyrics_search_dialog, **_BTN).pack(side=LEFT, padx=(0, 6))
+        self.repertoire_summary_var = tk.StringVar(value="")
 
-        ttk.Label(frame, text="드래그로 순서 변경 · 더블클릭으로 수정",
-                  foreground=MUTED_FG, font=("맑은 고딕", 9)).grid(
-            row=1, column=0, sticky=W, pady=(0, 4))
+        # Row 1: hint text (moved above scroll area)
+        tk.Label(frame, text="드래그로 순서 변경 · 더블클릭으로 수정",
+                 fg=MUTED_FG, font=("맑은 고딕", 9)).grid(
+            row=1, column=0, sticky=W, pady=(2, 2))
 
-        # Repertoire scroll frame
-        self.repertoire_sort_scroll = ScrolledFrame(frame, autohide=True, height=180)
-        self.repertoire_sort_scroll.grid(row=3, column=0, sticky=NSEW)
+        # Row 2: scroll area
+        _rep_outer = tk.Frame(frame)
+        _rep_outer.grid(row=2, column=0, sticky=NSEW)
+        _rep_outer.columnconfigure(0, weight=1)
+        _rep_outer.rowconfigure(0, weight=1)
+        self._rep_canvas = tk.Canvas(_rep_outer, highlightthickness=0, bg=BG_APP)
+        _rep_vs = ttk.Scrollbar(_rep_outer, orient=VERTICAL, command=self._rep_canvas.yview,
+                                style="Slim.Vertical.TScrollbar")
+        self.repertoire_sort_scroll = tk.Frame(self._rep_canvas, bg=BG_APP)
+        _rep_win = self._rep_canvas.create_window((0, 0), window=self.repertoire_sort_scroll, anchor=NW)
+        def _sync_rep_width(w):
+            if w > 1:
+                self._rep_canvas.itemconfigure(_rep_win, width=w)
+        def _on_rep_inner_cfg(e):
+            self._rep_canvas.configure(scrollregion=self._rep_canvas.bbox("all"))
+            _sync_rep_width(self._rep_canvas.winfo_width())
+        def _on_rep_canvas_cfg(e):
+            _sync_rep_width(e.width)
+            self._rep_canvas.configure(scrollregion=self._rep_canvas.bbox("all"))
+        self.repertoire_sort_scroll.bind("<Configure>", _on_rep_inner_cfg)
+        self._rep_canvas.bind("<Configure>", _on_rep_canvas_cfg)
+        self._rep_canvas.configure(yscrollcommand=_rep_vs.set)
+        self._rep_canvas.grid(row=0, column=0, sticky=NSEW)
+        _rep_vs.grid(row=0, column=1, sticky=NS)
         self.repertoire_sort_scroll.columnconfigure(0, weight=1)
+        self._drop_line = self._rep_canvas.create_line(
+            0, 0, 9999, 0, fill=ACCENT_TEAL, width=3, state="hidden"
+        )
         self._repertoire_row_frames: list = []
         self._repertoire_drag_from_index: int | None = None
         self._repertoire_drag_target_index: int | None = None
         self._repertoire_drag_start_x: int | None = None
         self._repertoire_drag_start_y: int | None = None
         self._repertoire_drag_active = False
+        self._drag_ghost: tk.Toplevel | None = None
         self.refresh_repertoire_sort_list()
 
+        # Row 3: reset button only (no competing text, so never clipped)
+        bottom_bar = tk.Frame(frame)
+        bottom_bar.grid(row=3, column=0, sticky=EW, pady=(2, 0))
+        ttk.Button(bottom_bar, text="⟳ 리셋", bootstyle=OUTLINE,
+                   padding=(10, 5),
+                   command=self.reset_all_repertoire).pack(side=RIGHT)
+
     def _create_lyrics_panel(self, parent):
-        frame = ttk.LabelFrame(parent, text="  가사 편집  ", bootstyle=PRIMARY, padding=10)
-        frame.grid(row=0, column=1, sticky=NSEW, padx=(8, 0))
-        frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(1, weight=1)
+        frame = tk.LabelFrame(parent, text="  가사 편집  ", padx=8, pady=8,
+                              font=("Segoe UI", 11, "bold"),
+                              bg=BG_APP, fg=FG_APP)
+        frame.grid(row=0, column=1, sticky=NSEW, padx=(6, 0))
+        frame.columnconfigure(0, minsize=150)
+        frame.columnconfigure(1, weight=1, minsize=180)
+        frame.rowconfigure(1, weight=1, minsize=150)
 
         # Header
-        hdr = ttk.Frame(frame)
+        hdr = tk.Frame(frame)
         hdr.grid(row=0, column=0, columnspan=3, sticky=EW, pady=(0, 8))
+        hdr.columnconfigure(0, weight=1)
         self.current_song_var = tk.StringVar(value="곡을 선택하세요")
-        ttk.Label(hdr, textvariable=self.current_song_var,
-                  foreground=MUTED_FG, font=("맑은 고딕", 11)).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(hdr, text="⟳", width=3, bootstyle=OUTLINE,
-                   command=self.reload_current_song_lyrics_from_history).pack(side=LEFT)
+        tk.Label(hdr, textvariable=self.current_song_var,
+                 fg=MUTED_FG, font=("맑은 고딕", 10),
+                 anchor=W).grid(row=0, column=0, sticky=EW)
+        _dl_icon = self._get_icon("download")
+        ttk.Button(hdr, image=_dl_icon, text="" if _dl_icon else "📥",
+                   width=0 if _dl_icon else 3, bootstyle=OUTLINE, padding=(6, 5),
+                   command=self.reload_current_song_lyrics_from_history).grid(
+            row=0, column=1, padx=(6, 0))
 
         # Song list (left)
-        list_frame = ttk.Frame(frame, width=175)
-        list_frame.grid(row=1, column=0, sticky=NS, padx=(0, 8))
+        list_frame = tk.Frame(frame, width=160)
+        list_frame.grid(row=1, column=0, sticky=NSEW, padx=(0, 6))
         list_frame.grid_propagate(False)
         list_frame.rowconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
 
         self.song_listbox = tk.Listbox(list_frame, selectmode=SINGLE, activestyle="none",
                                        width=18, relief=FLAT, highlightthickness=0,
-                                       selectbackground="#FADCE5", selectforeground="#3d4756",
+                                       bg=BG_APP, fg=FG_APP,
+                                       selectbackground=ACCENT_LBUE, selectforeground=FG_APP,
                                        font=("맑은 고딕", 11))
-        scroll_y = ttk.Scrollbar(list_frame, orient=VERTICAL, command=self.song_listbox.yview)
+        scroll_y = ttk.Scrollbar(list_frame, orient=VERTICAL, command=self.song_listbox.yview,
+                                 style="Slim.Vertical.TScrollbar")
         self.song_listbox.configure(yscrollcommand=scroll_y.set)
         self.song_listbox.grid(row=0, column=0, sticky=NSEW)
         scroll_y.grid(row=0, column=1, sticky=NS)
@@ -530,31 +903,50 @@ class LyricsApp(ttk.Window):
         self.song_listbox.bind("<<ListboxSelect>>", self._on_song_listbox_select)
         self.song_buttons = []
 
-        # Lyrics text area (right)
-        self.lyrics_text = ScrolledText(frame, autohide=True, wrap=WORD,
-                                        font=("맑은 고딕", 12), height=10)
-        self.lyrics_text.grid(row=1, column=1, sticky=NSEW)
+        # Lyrics text area (right) — plain tk.Text + scrollbar
+        lt_outer = tk.Frame(frame)
+        lt_outer.grid(row=1, column=1, sticky=NSEW)
+        lt_outer.columnconfigure(0, weight=1)
+        lt_outer.rowconfigure(0, weight=1)
+        self.lyrics_text = tk.Text(lt_outer, wrap=WORD, undo=True,
+                                   font=("맑은 고딕", 12),
+                                   bg=BG_APP, fg=FG_APP,
+                                   insertbackground=MAIN_CLR,
+                                   relief=FLAT, highlightthickness=1,
+                                   highlightbackground=ACCENT_LBUE,
+                                   highlightcolor=MAIN_CLR)
+        _lt_vs = ttk.Scrollbar(lt_outer, orient=VERTICAL, command=self.lyrics_text.yview,
+                               style="Slim.Vertical.TScrollbar")
+        self.lyrics_text.configure(yscrollcommand=_lt_vs.set)
+        self.lyrics_text.grid(row=0, column=0, sticky=NSEW)
+        _lt_vs.grid(row=0, column=1, sticky=NS)
         self.lyrics_text.bind("<FocusIn>", self.on_lyrics_focus_in)
         self.lyrics_text.bind("<FocusOut>", self.on_lyrics_focus_out)
         self.lyrics_text.bind("<<Modified>>", self.on_lyrics_modified)
-        self.lyrics_text.configure(undo=True)
         self.show_lyrics_guide()
 
     def _create_action_bar(self):
-        bar = ttk.Frame(self, relief=RIDGE, borderwidth=1)
-        bar.grid(row=2, column=0, sticky=EW, padx=28, pady=(0, 8))
+        bar = tk.Frame(self, bg=BG_APP)
+        bar.grid(row=2, column=0, sticky=EW, padx=20, pady=(0, 10))
 
-        self.refresh_btn = ttk.Button(bar, text="레파토리 인식", bootstyle=OUTLINE,
-                                      command=lambda: self.refresh_song_list(trigger_download=True))
-        self.refresh_btn.pack(side=LEFT, padx=(10, 6), pady=10)
+        _STD = {"padding": (14, 7)}
+        self.refresh_btn = ttk.Button(bar, text="전체 가사 가져오기", bootstyle=OUTLINE,
+                                      command=lambda: self.refresh_song_list(trigger_download=True),
+                                      **_STD)
+        self.refresh_btn.pack(side=LEFT, padx=(0, 6), pady=8)
 
         self.generate_btn = ttk.Button(bar, text="파워포인트 생성", style="Brand.TButton",
-                                       command=self.generate_ppt)
-        self.generate_btn.pack(side=RIGHT, padx=(6, 10), pady=10)
+                                       command=self._on_generate_click, **_STD)
+        self.generate_btn.pack(side=RIGHT, padx=(6, 0), pady=8)
 
         self.songlist_btn = ttk.Button(bar, text="송리스트 카드 생성", bootstyle=OUTLINE,
-                                       command=self.generate_songlist_card)
-        self.songlist_btn.pack(side=RIGHT, padx=6, pady=10)
+                                       command=self.generate_songlist_card, **_STD)
+        self.songlist_btn.pack(side=RIGHT, padx=6, pady=8)
+
+    def _on_generate_click(self):
+        self.generate_btn.configure(style="BrandPress.TButton")
+        self.after(160, lambda: self.generate_btn.configure(style="Brand.TButton"))
+        self.after(30, self.generate_ppt)
 
     # ── Lyrics guide (placeholder) ─────────────────────────────────────
     def show_lyrics_guide(self):
@@ -562,7 +954,7 @@ class LyricsApp(ttk.Window):
         self.lyrics_text.configure(state=NORMAL)
         self.lyrics_text.delete("1.0", END)
         self.lyrics_text.insert("1.0", LYRICS_GUIDE_TEXT)
-        self.lyrics_text.configure(foreground="#9aa3af")
+        self.lyrics_text.configure(foreground=FG_MUTED)
         self.lyrics_placeholder_visible = True
         self.lyrics_text.edit_modified(False)
         self.loading_lyrics = False
@@ -669,31 +1061,33 @@ class LyricsApp(ttk.Window):
             child.destroy()
         self._repertoire_row_frames = []
 
-        if not self.repertoire_entries:
-            ttk.Label(self.repertoire_sort_scroll, text="인식된 레파토리가 없습니다.",
-                      foreground=MUTED_FG, font=("맑은 고딕", 10)).grid(
-                row=0, column=0, sticky=W, padx=8, pady=6)
-            self._update_repertoire_summary()
-            return
-
         for index, (title, sequence) in enumerate(self.repertoire_entries):
-            row = ttk.Frame(self.repertoire_sort_scroll, relief=SOLID, borderwidth=1)
-            row.grid(row=index, column=0, sticky=EW, padx=6, pady=(0, 6))
+            row = tk.Frame(self.repertoire_sort_scroll,
+                           bg=BG_APP, highlightbackground=ACCENT_LBUE, highlightthickness=1)
+            row.grid(row=index, column=0, sticky=EW, padx=6, pady=(0, 5))
             row.columnconfigure(1, weight=1)
 
-            ttk.Label(row, text=f"{index + 1}", foreground=MUTED_FG,
-                      font=("Segoe UI", 10, "bold"), width=3).grid(
+            tk.Label(row, text=f"{index + 1}", fg=FG_MUTED,
+                     font=("Segoe UI", 10, "bold"), width=3).grid(
                 row=0, column=0, rowspan=2, sticky=NS, padx=(8, 4), pady=8)
 
-            ttk.Label(row, text=title, font=("맑은 고딕", 10, "bold")).grid(
+            tk.Label(row, text=title,
+                     font=("맑은 고딕", 10, "bold"), anchor=W).grid(
                 row=0, column=1, sticky=EW, padx=(0, 4), pady=(8, 2))
-            ttk.Label(row, text=sequence, foreground=MUTED_FG,
-                      font=("맑은 고딕", 9), wraplength=300).grid(
+            tk.Label(row, text=sequence, fg=FG_MUTED,
+                     font=("맑은 고딕", 9), wraplength=300, anchor=W).grid(
                 row=1, column=1, sticky=EW, padx=(0, 4), pady=(0, 8))
 
-            ttk.Button(row, text="✎", width=3, bootstyle=OUTLINE,
-                       command=lambda i=index: self.edit_repertoire_item(i)).grid(
-                row=0, column=2, rowspan=2, sticky=NS, padx=(0, 6), pady=8)
+            btn_col = tk.Frame(row)
+            btn_col.grid(row=0, column=2, rowspan=2, sticky=NS, padx=(0, 6), pady=6)
+            _ti = self._get_icon("trash")
+            ttk.Button(btn_col, text="✏️", width=2, bootstyle=OUTLINE, padding=(4, 4),
+                       command=lambda i=index: self.edit_repertoire_item(i)).pack(
+                fill=X, pady=(0, 3))
+            ttk.Button(btn_col, image=_ti, text="" if _ti else "✕",
+                       width=2 if not _ti else 0,
+                       bootstyle="danger-outline", padding=(4, 4),
+                       command=lambda i=index: self.delete_repertoire_item(i)).pack(fill=X)
 
             for widget in (row, *row.winfo_children()):
                 widget.bind("<ButtonPress-1>", lambda e, i=index: self._on_rep_press(i, e))
@@ -703,8 +1097,53 @@ class LyricsApp(ttk.Window):
 
             self._repertoire_row_frames.append(row)
 
+        # "+" add button — small square, always visible (row 0 when empty)
+        plus_row = len(self.repertoire_entries)
+        plus_btn = tk.Button(
+            self.repertoire_sort_scroll, text="+",
+            relief=SOLID, bd=1,
+            bg=BG_APP, activebackground=ACCENT_LBUE,
+            fg=FG_MUTED, activeforeground=FG_APP,
+            font=("Segoe UI", 13, "bold"),
+            width=2, height=1,
+            cursor="hand2",
+            highlightbackground=ACCENT_LBUE, highlightthickness=1,
+            command=self.open_lyrics_search_dialog,
+        )
+        plus_btn.grid(row=plus_row, column=0, pady=6)
+
         self.repertoire_sort_scroll.columnconfigure(0, weight=1)
         self._update_repertoire_summary()
+
+    def delete_repertoire_item(self, index: int):
+        if not (0 <= index < len(self.repertoire_entries)):
+            return
+        self._push_undo()
+        title = self.repertoire_entries[index][0]
+        self.repertoire_entries.pop(index)
+        self.lyrics_store.pop(title, None)
+        if self.current_song_title == title:
+            self.current_song_title = None
+            self._set_song_title_display("곡을 선택하세요")
+            self.show_lyrics_guide()
+        self.refresh_repertoire_sort_list()
+        self.sync_sequence_text_from_repertoire()
+        self.populate_song_list(self.repertoire_entries)
+
+    def reset_all_repertoire(self):
+        if not self.repertoire_entries:
+            return
+        if not messagebox.askyesno("전체 리셋", "모든 레파토리와 가사를 삭제합니다.\n계속할까요?"):
+            return
+        self._push_undo()
+        self.repertoire_entries.clear()
+        self.lyrics_store.clear()
+        self.current_song_title = None
+        self._set_song_title_display("곡을 선택하세요")
+        self.show_lyrics_guide()
+        self.refresh_repertoire_sort_list()
+        self.sync_sequence_text_from_repertoire()
+        self.populate_song_list([])
 
     def _update_repertoire_summary(self):
         count = len(self.repertoire_entries)
@@ -735,12 +1174,15 @@ class LyricsApp(ttk.Window):
                    abs(event.y_root - self._repertoire_drag_start_y)) < 6:
                 return
             self._repertoire_drag_active = True
+            self._create_drag_ghost(self._repertoire_drag_from_index, event)
 
         target = self._target_index_by_y(event.y_root)
         self._repertoire_drag_target_index = target
         self._update_drag_visuals()
+        self._move_drag_ghost(event)
 
     def _on_rep_release(self, _index, event=None):
+        self._destroy_drag_ghost()
         if self._repertoire_drag_from_index is None or not self._repertoire_drag_active:
             self._repertoire_drag_from_index = None
             self._repertoire_drag_target_index = None
@@ -748,39 +1190,93 @@ class LyricsApp(ttk.Window):
             return
 
         source = self._repertoire_drag_from_index
-        target = self._target_index_by_y(event.y_root) if event else source
+        insert_pos = self._target_index_by_y(event.y_root) if event else source
         self._repertoire_drag_from_index = None
         self._repertoire_drag_target_index = None
         self._repertoire_drag_active = False
+        self._update_drag_visuals()
 
-        if (source != target and
-                0 <= source < len(self.repertoire_entries) and
-                0 <= target < len(self.repertoire_entries)):
-            moved = self.repertoire_entries.pop(source)
-            self.repertoire_entries.insert(target, moved)
+        # No-op: inserting immediately before or after source is the same position
+        if insert_pos == source or insert_pos == source + 1:
+            return
+        if 0 <= source < len(self.repertoire_entries):
+            self._push_undo()
+            item = self.repertoire_entries.pop(source)
+            effective = insert_pos if insert_pos <= source else insert_pos - 1
+            self.repertoire_entries.insert(effective, item)
             self.refresh_repertoire_sort_list()
             self.sync_sequence_text_from_repertoire()
+            self.populate_song_list(self.repertoire_entries)
+
+    def _create_drag_ghost(self, index: int, event):
+        if not (0 <= index < len(self.repertoire_entries)):
+            return
+        title = self.repertoire_entries[index][0]
+        src_frame = self._repertoire_row_frames[index]
+        w = max(src_frame.winfo_width(), 180)
+        h = max(src_frame.winfo_height(), 40)
+        ghost = tk.Toplevel(self)
+        ghost.overrideredirect(True)
+        ghost.attributes("-alpha", 0.75)
+        ghost.attributes("-topmost", True)
+        ghost.geometry(f"{w}x{h}+{event.x_root - w // 2}+{event.y_root - h // 2}")
+        inner = tk.Frame(ghost, bg=ACCENT_LBUE, relief=SOLID, bd=1)
+        inner.pack(fill=BOTH, expand=True)
+        tk.Label(inner, text=title, font=("맑은 고딕", 10, "bold"),
+                 bg=ACCENT_LBUE, fg=FG_APP).pack(expand=True)
+        self._drag_ghost = ghost
+
+    def _move_drag_ghost(self, event):
+        if self._drag_ghost:
+            w = self._drag_ghost.winfo_width()
+            h = self._drag_ghost.winfo_height()
+            self._drag_ghost.geometry(f"+{event.x_root - w // 2}+{event.y_root - h // 2}")
+
+    def _destroy_drag_ghost(self):
+        if self._drag_ghost:
+            try:
+                self._drag_ghost.destroy()
+            except Exception:
+                pass
+            self._drag_ghost = None
+        try:
+            self._rep_canvas.itemconfigure(self._drop_line, state="hidden")
+        except Exception:
+            pass
 
     def _target_index_by_y(self, y_root: int) -> int:
-        for i, frame in enumerate(self._repertoire_row_frames):
+        """Returns insertion index 0..N (between items, not on items)."""
+        frames = self._repertoire_row_frames
+        for i, frame in enumerate(frames):
             mid = frame.winfo_rooty() + frame.winfo_height() // 2
             if y_root < mid:
                 return i
-        return max(0, len(self._repertoire_row_frames) - 1)
+        return len(frames)
 
     def _update_drag_visuals(self):
         src = self._repertoire_drag_from_index
         tgt = self._repertoire_drag_target_index
-        for i, frame in enumerate(self._repertoire_row_frames):
-            try:
-                if i == src:
-                    frame.configure(relief=SOLID)
-                elif i == tgt:
-                    frame.configure(relief=RIDGE)
-                else:
-                    frame.configure(relief=SOLID)
-            except Exception:
-                pass
+        frames = self._repertoire_row_frames
+
+        if not self._repertoire_drag_active or tgt is None or not frames:
+            self._rep_canvas.itemconfigure(self._drop_line, state="hidden")
+            return
+
+        # Position drop indicator line at the insertion gap
+        n = len(frames)
+        if tgt == 0:
+            y = frames[0].winfo_y()
+        elif tgt >= n:
+            last = frames[-1]
+            y = last.winfo_y() + last.winfo_height()
+        else:
+            above = frames[tgt - 1]
+            below = frames[tgt]
+            y = (above.winfo_y() + above.winfo_height() + below.winfo_y()) // 2
+
+        w = self._rep_canvas.winfo_width()
+        self._rep_canvas.coords(self._drop_line, 4, y, w - 4, y)
+        self._rep_canvas.itemconfigure(self._drop_line, state="normal")
 
     # ── Asset helpers ──────────────────────────────────────────────────
     def find_asset_file(self, file_name: str) -> str | None:
@@ -1068,9 +1564,24 @@ class LyricsApp(ttk.Window):
         self.refresh_repertoire_sort_list()
         self.refresh_song_list(show_message=False)
 
+    def _preload_db_cache(self):
+        threading.Thread(target=self._fetch_db_cache, daemon=True).start()
+
+    def _fetch_db_cache(self):
+        try:
+            items = list_recent_lyrics_catalog(self.get_server_url(), limit=50)
+            self._db_catalog_cache = items
+            self._db_cache_ready = True
+        except Exception:
+            self._db_catalog_cache = []
+            self._db_cache_ready = False
+
     def open_lyrics_search_dialog(self):
         server_url = self.get_server_url()
-        dialog = LyricsSearchDialog(self, server_url)
+        preloaded = self._db_catalog_cache if self._db_cache_ready else None
+        dialog = LyricsSearchDialog(self, server_url,
+                                    preloaded=preloaded,
+                                    on_refreshed=self._on_db_refreshed)
         item = dialog.result
         if not item:
             return
@@ -1080,6 +1591,17 @@ class LyricsApp(ttk.Window):
         lyrics = str(item.get("lyrics") or "").strip()
         if not title:
             return
+
+        # recent 목록은 lyrics를 포함하지 않으므로 by-title로 별도 조회
+        if not lyrics:
+            try:
+                full = lookup_lyrics_by_title(server_url, title)
+                if full:
+                    lyrics = str(full.get("lyrics") or "").strip()
+                    if not sequence:
+                        sequence = str(full.get("sequence") or "").strip()
+            except Exception:
+                pass
 
         if not sequence:
             dialog2 = MultilineDialog(
@@ -1206,10 +1728,68 @@ class LyricsApp(ttk.Window):
         self.lyrics_store = {}
         self._loaded_history_lyrics_by_title = {}
         self.current_song_title = None
-        self.current_song_var.set("곡을 선택하세요")
+        self._set_song_title_display("곡을 선택하세요")
         self.populate_song_list([], preserve_current=False)
         self.show_lyrics_guide()
         self.log("[안내] 불러온 작업 내용을 초기화했습니다.")
+
+    # ── Undo / Redo ────────────────────────────────────────────────────
+    def _push_undo(self):
+        import copy
+        self._undo_stack.append((
+            list(self.repertoire_entries),
+            copy.copy(self.lyrics_store),
+        ))
+        self._redo_stack.clear()
+        if len(self._undo_stack) > 50:
+            self._undo_stack.pop(0)
+
+    def undo_repertoire(self):
+        if not self._undo_stack:
+            return
+        import copy
+        self._redo_stack.append((list(self.repertoire_entries), copy.copy(self.lyrics_store)))
+        entries, store = self._undo_stack.pop()
+        self.repertoire_entries = entries
+        self.lyrics_store = store
+        self._apply_repertoire_state()
+
+    def redo_repertoire(self):
+        if not self._redo_stack:
+            return
+        import copy
+        self._undo_stack.append((list(self.repertoire_entries), copy.copy(self.lyrics_store)))
+        entries, store = self._redo_stack.pop()
+        self.repertoire_entries = entries
+        self.lyrics_store = store
+        self._apply_repertoire_state()
+
+    def _apply_repertoire_state(self):
+        self.refresh_repertoire_sort_list()
+        self.sync_sequence_text_from_repertoire()
+        self.populate_song_list(self.repertoire_entries)
+        if self.current_song_title and self.current_song_title in self.lyrics_store:
+            self.set_lyrics_editor_text(self.lyrics_store[self.current_song_title])
+        elif self.current_song_title not in (e[0] for e in self.repertoire_entries):
+            self.current_song_title = None
+            self._set_song_title_display("곡을 선택하세요")
+            self.show_lyrics_guide()
+
+    def _on_db_refreshed(self, items: list[dict]):
+        self._db_catalog_cache = items
+        self._db_cache_ready = True
+
+    def open_server_settings(self):
+        ServerSettingsDialog(self, self.server_url_var)
+
+    def open_ppt_settings(self):
+        PPTSettingsDialog(self, self.max_lines_var, self.max_chars_var,
+                          self.lyrics_font_size_var)
+
+    def _set_song_title_display(self, title: str, max_chars: int = 22):
+        if len(title) > max_chars:
+            title = title[:max_chars - 1] + "…"
+        self.current_song_var.set(title)
 
     def reload_current_song_lyrics_from_history(self):
         if not self.current_song_title:
@@ -1249,7 +1829,7 @@ class LyricsApp(ttk.Window):
                 self.load_lyrics_for_song(song_title)
         else:
             self.current_song_title = None
-            self.current_song_var.set("곡을 선택하세요")
+            self._set_song_title_display("곡을 선택하세요")
             self.show_lyrics_guide()
 
         if show_message:
@@ -1262,7 +1842,7 @@ class LyricsApp(ttk.Window):
 
     def load_lyrics_for_song(self, song_title: str):
         self.current_song_title = song_title
-        self.current_song_var.set(song_title)
+        self._set_song_title_display(song_title)
         lyrics = self.lyrics_store.get(song_title, "")
         if lyrics.strip():
             self.set_lyrics_editor_text(lyrics)

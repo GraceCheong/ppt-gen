@@ -9,6 +9,7 @@ PNG 변환에는 Windows + Microsoft PowerPoint 또는 LibreOffice가 필요합�
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 import datetime
 import json
 import logging
@@ -16,6 +17,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -43,7 +45,18 @@ TEMPLATE_SYNC_INTERVAL_SECONDS = 10 * 60
 GENERATOR_VERSION = "direct-python-pptx-v4"
 MAX_ERROR_REPORT_TEXT = 12000
 
-app = FastAPI(title="PO,RR PPT Server", version="1.1.0")
+@asynccontextmanager
+async def _lifespan(app_: FastAPI):
+    global _template_sync_task
+    _init_history_db()
+    if _template_sync_task is None or _template_sync_task.done():
+        _template_sync_task = asyncio.create_task(_template_sync_loop())
+    yield
+    if _template_sync_task is not None:
+        _template_sync_task.cancel()
+
+
+app = FastAPI(title="PO,RR PPT Server", version="1.1.0", lifespan=_lifespan)
 
 # COM은 단일 스레드에서 직렬로 처리해야 하므로 max_workers=1
 _executor = ThreadPoolExecutor(max_workers=1)
@@ -61,6 +74,16 @@ def _history_db_path() -> str:
 def _normalize_lyrics_title(title: str) -> str:
     """검색/중복 확인용 정규화 키 (소문자+공백 제거)."""
     return title.strip().lower()
+
+
+def _normalize_sequence(seq: str) -> str:
+    """레파토리 정규화: 공백 제거 + 구분자(-) 기준 각 토큰 첫 글자 대문자, 나머지 소문자.
+    예) 'v1 - c - B - verse2' → 'V1-C-B-Verse2'
+    """
+    seq = seq.replace(" ", "")
+    if not seq:
+        return seq
+    return "-".join(t.capitalize() for t in seq.split("-") if t)
 
 
 def _init_history_db() -> None:
@@ -96,6 +119,12 @@ def _init_history_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_lyrics_catalog_display ON lyrics_catalog(display_title)"
         )
+        # 기존 데이터의 sequence 정규화 (공백 제거 + 첫 글자 대문자)
+        rows = conn.execute("SELECT title_key, sequence FROM lyrics_catalog WHERE sequence != ''").fetchall()
+        for title_key, seq in rows:
+            normalized = _normalize_sequence(seq)
+            if normalized != seq:
+                conn.execute("UPDATE lyrics_catalog SET sequence=? WHERE title_key=?", (normalized, title_key))
         conn.commit()
 
 
@@ -176,7 +205,7 @@ def _index_lyrics_from_snapshot(
             if not display_title or not str(lyrics).strip():
                 continue
             title_key = _normalize_lyrics_title(display_title)
-            sequence = sequence_map.get(display_title, "")
+            sequence = _normalize_sequence(sequence_map.get(display_title, ""))
             conn.execute(
                 """
                 INSERT INTO lyrics_catalog (
@@ -209,6 +238,7 @@ def _upsert_lyrics_catalog(
 ) -> None:
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     title_key = _normalize_lyrics_title(display_title)
+    sequence = _normalize_sequence(sequence)
     db_path = _history_db_path()
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -259,6 +289,30 @@ def _search_lyrics_catalog(query: str, limit: int = 10) -> list[dict]:
     ]
 
 
+def _list_recent_lyrics_catalog(limit: int = 50) -> list[dict]:
+    db_path = _history_db_path()
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT display_title, sequence, source, updated_at_utc
+            FROM lyrics_catalog
+            ORDER BY updated_at_utc DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 200)),),
+        ).fetchall()
+    return [
+        {
+            "title": row["display_title"],
+            "sequence": row["sequence"],
+            "source": row["source"],
+            "updated_at_utc": row["updated_at_utc"],
+        }
+        for row in rows
+    ]
+
+
 def _lookup_lyrics_by_title(title: str) -> dict | None:
     title_key = _normalize_lyrics_title(title)
     db_path = _history_db_path()
@@ -282,6 +336,7 @@ def _lookup_lyrics_by_title(title: str) -> dict | None:
     }
 
 
+def _list_weekly_repertoire(year_from: int = 2026) -> list[dict]:
     db_path = _history_db_path()
     min_date = datetime.date(year_from, 1, 1).isoformat()
 
@@ -427,19 +482,6 @@ async def _template_sync_loop() -> None:
         await asyncio.sleep(TEMPLATE_SYNC_INTERVAL_SECONDS)
 
 
-@app.on_event("startup")
-async def start_template_sync() -> None:
-    global _template_sync_task
-    _init_history_db()
-    if _template_sync_task is None or _template_sync_task.done():
-        _template_sync_task = asyncio.create_task(_template_sync_loop())
-
-
-@app.on_event("shutdown")
-async def stop_template_sync() -> None:
-    if _template_sync_task is not None:
-        _template_sync_task.cancel()
-
 
 def _slide_px(pptx_path: str, long_edge_px: int = 2000) -> tuple[int, int]:
     prs = Presentation(pptx_path)
@@ -492,10 +534,42 @@ async def _save_upload_atomic(upload: UploadFile, path: str) -> None:
     os.makedirs(target_dir, exist_ok=True)
     temp_path = target_abs + ".tmp"
 
+    # 이전 실패로 남은 .tmp 파일 정리
+    try:
+        os.remove(temp_path)
+    except (FileNotFoundError, PermissionError):
+        pass
+
     with open(temp_path, "wb") as f:
         f.write(data)
 
-    os.replace(temp_path, target_abs)
+    # Windows: os.replace can raise PermissionError if the target is held open
+    # by another process. Retry briefly, then fall back to remove-then-replace.
+    for _attempt in range(4):
+        try:
+            os.replace(temp_path, target_abs)
+            break
+        except PermissionError:
+            if _attempt < 3:
+                time.sleep(0.25)
+    else:
+        # Last resort: delete target first, then replace
+        try:
+            os.remove(target_abs)
+        except (FileNotFoundError, PermissionError):
+            pass
+        try:
+            os.replace(temp_path, target_abs)   # replace overwrites on Windows
+        except (PermissionError, FileExistsError):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            raise HTTPException(
+                503,
+                detail="템플릿 파일이 다른 프로그램에서 사용 중입니다. "
+                       "PowerPoint 등을 닫은 후 다시 시도해 주세요.",
+            )
 
 
 def _load_payload(payload: str) -> dict:
@@ -566,6 +640,16 @@ def download_history_db():
     )
 
 
+@app.get("/lyrics/recent")
+def list_recent_lyrics(limit: int = 50):
+    """가사 카탈로그를 최근 수정일 순으로 반환합니다."""
+    try:
+        results = _list_recent_lyrics_catalog(limit=limit)
+    except Exception as e:
+        raise HTTPException(500, detail=f"가사 목록 조회 실패: {e}")
+    return {"items": results, "count": len(results)}
+
+
 @app.get("/lyrics/search")
 def search_lyrics(q: str = "", limit: int = 10):
     """가사 카탈로그에서 곡명으로 검색합니다."""
@@ -624,6 +708,7 @@ async def upsert_lyrics(request: Request):
     return {"status": "ok", "title": title, "source": source}
 
 
+@app.post("/client-error-report")
 async def client_error_report(request: Request):
     try:
         data = await request.json()
@@ -810,3 +895,9 @@ async def songlist_card(payload: str = Form(...), template: UploadFile = File(..
         media_type="image/png",
         headers={"X-Week-Number": str(week_num)},
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    from constants import SERVER_PORT
+    uvicorn.run(app, host="0.0.0.0", port=SERVER_PORT)

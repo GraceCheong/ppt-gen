@@ -232,6 +232,35 @@ def search_lyrics_catalog(server_url, query, limit=10, timeout=10):
     return items
 
 
+def list_recent_lyrics_catalog(server_url, limit=50, timeout=10):
+    """가사 카탈로그를 최근 수정일 순으로 조회합니다. [{"title", "sequence", "lyrics", "source", "updated_at_utc"}, ...] 반환."""
+    url = server_url.rstrip("/") + "/lyrics/recent"
+    try:
+        response = requests.get(url, params={"limit": max(1, min(limit, 200))}, timeout=(2, timeout))
+    except requests.RequestException as exc:
+        raise PptServerUnavailable(f"endpoint=/lyrics/recent, 네트워크 오류: {exc}") from exc
+
+    if response.status_code in (404, 405):
+        raise PptServerEndpointUnavailable(
+            f"endpoint=/lyrics/recent, 서버 오류 {response.status_code}"
+        )
+    if response.status_code >= 400:
+        raise PptServerResponseError(
+            f"endpoint=/lyrics/recent, 서버 오류 {response.status_code}: {_response_detail(response)}",
+            status_code=response.status_code,
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise PptServerUnavailable("endpoint=/lyrics/recent, JSON 응답을 해석할 수 없습니다.") from exc
+
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise PptServerUnavailable("endpoint=/lyrics/recent, items 형식이 올바르지 않습니다.")
+    return items
+
+
 def lookup_lyrics_by_title(server_url, title, timeout=10):
     """정확한 곡명으로 가사를 조회합니다. 없으면 None 반환."""
     url = server_url.rstrip("/") + "/lyrics/by-title"
