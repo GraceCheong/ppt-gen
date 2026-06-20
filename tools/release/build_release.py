@@ -9,7 +9,7 @@ from pathlib import Path
 
 APP_DIR_NAME = "PORR_atempo"
 RELEASE_DIR_NAME = "Release"
-VERSION_RE = re.compile(r"^v1\.1\.(\d+)$")
+VERSION_RE = re.compile(r"^v1\.1(\.\d+)?$")
 SPEC_FILE_NAME = "LyricsToPPT.spec"
 
 ASSET_FILES = (
@@ -47,7 +47,9 @@ def find_release_dirs(release_dir: Path) -> list[tuple[int, Path]]:
             continue
         match = VERSION_RE.match(path.name)
         if match:
-            result.append((int(match.group(1)), path))
+            patch_str = match.group(1)
+            patch = int(patch_str[1:]) if patch_str else 0
+            result.append((patch, path))
     return sorted(result, key=lambda item: item[0])
 
 
