@@ -62,16 +62,13 @@ ACCENT_SOFT = "#f8e6ec"
 LOG_BG = "#3d4756"
 
 SEQUENCE_GUIDE_TEXT = """레파토리를 입력한 후, 버튼을 눌러 가사를 다운로드 하세요:
+
 한나의 노래
 I-V1-V2-C-Inter-V2-C-C-Out
-나의 하나님
-I-V1-V1-C-Inter-V2-C-B-C-C
-함께 지어져 가네
-I-V-C-Inter-V-C-C-Out
-우리 함께 기도해
-I-V-C-I-V-C-C-V-C-C"""
+"""
 
 LYRICS_GUIDE_TEXT = """가사를 다운로드 한 후, 레파토리에 사용한 파트 구분자를 다음과 같이 적어주세요:
+
 V1
 나의 사랑
 너는 어여쁘고 참 귀하다

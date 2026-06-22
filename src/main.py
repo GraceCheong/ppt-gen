@@ -40,6 +40,13 @@ from ppt_server_client import (
 from ppt_service import build_integrated_pptx_with_local_office
 from songlist_builder import build_songlist_card
 from error_reporter import build_error_report, format_exception, report_error_async, send_error_report
+from porr_core.repertoire import (
+    clean_repertoire_title,
+    normalize_repertoire_entries,
+    format_repertoire_entries,
+    sequence_text_from_entries,
+)
+from porr_core.slide_estimator import estimate_slide_count
 from constants import (
     APP_DISPLAY_NAME, APP_WINDOW_TITLE,
     ASSETS_DIR_NAME, ICON_ICO_FILE_NAME, ICON_FILE_NAME, LOGO_FILE_NAME,
@@ -894,58 +901,12 @@ class LyricsApp(ctk.CTk):
 
     # ── 체크리스트 ────────────────────────────────────────────────────
     def _estimate_slide_count(self) -> int:
-        """ppt_builder.append_lyrics_to_ppt 로직을 미러링해 예상 슬라이드 수를 계산한다.
-        오프닝 2장 + 각 곡 제목 1장 + 가사 청크 합산 + 클로징 1장.
-        마지막 연속 반복(skip_indices) 및 max_lines/max_chars chunking 반영."""
-        from ppt_builder import (
-            parse_lyrics_text, get_base_key,
-            wrap_text_by_max_chars, chunk_text,
+        return estimate_slide_count(
+            repertoire_entries=self.repertoire_entries,
+            lyrics_by_title=self.lyrics_store,
+            max_lines_per_slide=self.get_max_lines_per_slide(),
+            max_chars_per_line=self.get_max_chars_per_line(),
         )
-        max_lines = self.get_max_lines_per_slide()
-        max_chars = self.get_max_chars_per_line()
-
-        total = 2  # 오프닝 슬라이드 2장 (홈 + 예배를 시작하며)
-        for title, seq_str in self.repertoire_entries:
-            if not seq_str.strip():
-                total += 1  # 제목 슬라이드만
-                continue
-
-            lyrics_text = self.lyrics_store.get(title, "")
-            lyrics_dict = parse_lyrics_text(lyrics_text) if lyrics_text.strip() else {}
-
-            seq_parts = [p.strip() for p in seq_str.split("-") if p.strip()]
-
-            # 마지막 연속 반복 그룹 skip (ppt_builder와 동일 로직)
-            skip_indices: set[int] = set()
-            if len(seq_parts) >= 2 and seq_parts[-1] == seq_parts[-2]:
-                trail = seq_parts[-1]
-                start = len(seq_parts) - 1
-                while start > 0 and seq_parts[start - 1] == trail:
-                    start -= 1
-                skip_indices = set(range(start + 1, len(seq_parts)))
-
-            total += 1  # 곡 제목 슬라이드
-
-            for idx, part in enumerate(seq_parts):
-                if idx in skip_indices:
-                    continue
-                base_part = get_base_key(part)
-
-                if part in lyrics_dict:
-                    text = lyrics_dict[part]
-                elif base_part in lyrics_dict:
-                    text = lyrics_dict[base_part]
-                else:
-                    if idx == 0 and base_part.upper() in ("I", "INTRO"):
-                        continue
-                    text = "-"
-
-                text = wrap_text_by_max_chars(text, max_chars)
-                chunks = chunk_text(text, max_lines) or [""]
-                total += len(chunks)
-
-        total += 1  # 클로징 슬라이드 (기도)
-        return total
 
     def _refresh_checklist(self):
         if not hasattr(self, "_checklist_frame"):
@@ -1625,38 +1586,16 @@ class LyricsApp(ctk.CTk):
 
     # ── 레파토리 헬퍼 ─────────────────────────────────────────────────
     def _clean_repertoire_title(self, value: str) -> str:
-        text = str(value or "").strip()
-        text = re.sub(r"^\s*\d+\s*[\.)]\s*", "", text)
-        return text.strip()
+        return clean_repertoire_title(value)
 
     def _normalize_repertoire_entries(self, raw_text: str) -> list:
-        lines = [l.strip() for l in str(raw_text or "").splitlines() if l.strip()]
-        entries, idx = [], 0
-        while idx + 1 < len(lines):
-            title = self._clean_repertoire_title(lines[idx])
-            sequence = lines[idx + 1].strip()
-            if title and sequence:
-                entries.append((title, sequence))
-            idx += 2
-        return entries
+        return normalize_repertoire_entries(raw_text)
 
     def _format_repertoire_entries(self, entries: list) -> str:
-        rows = []
-        for title, sequence in entries:
-            rows.append(str(title).strip())
-            rows.append(str(sequence).strip())
-        return "\n".join(rows).strip()
+        return format_repertoire_entries(entries)
 
     def _sequence_text_from_entries(self, seq_entries: list) -> str:
-        chunks = []
-        for entry in seq_entries:
-            if not isinstance(entry, dict):
-                continue
-            title = str(entry.get("title", "")).strip()
-            seq   = str(entry.get("sequence", "")).strip()
-            if title and seq:
-                chunks.append(f"{title}\n{seq}")
-        return "\n\n".join(chunks).strip()
+        return sequence_text_from_entries(seq_entries)
 
     # ── 템플릿 ────────────────────────────────────────────────────────
     def _on_template_selected(self, choice: str):

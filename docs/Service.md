@@ -30,7 +30,7 @@ $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 5 -
 Register-ScheduledTask -TaskName "PPTGenServer" `
     -Action $action -Trigger $trigger -Settings $settings `
     -RunLevel Highest `
-    -User "daeun\\daeun" `
+    -User "daeun\daeun" `
     -Password (Read-Host "Password") `
     -Force
 ```

@@ -28,6 +28,12 @@ except ImportError:
     ImageTk = None
 
 from ppt_builder import parse_sequence_text
+from porr_core.repertoire import (
+    clean_repertoire_title,
+    normalize_repertoire_entries,
+    format_repertoire_entries,
+    sequence_text_from_entries,
+)
 from ppt_server_client import (
     PptServerEndpointUnavailable,
     PptServerResponseError,
@@ -1503,39 +1509,16 @@ class LyricsApp(ttk.Window):
 
     # ── Repertoire helpers ─────────────────────────────────────────────
     def _clean_repertoire_title(self, value: str) -> str:
-        text = str(value or "").strip()
-        text = re.sub(r"^\s*\d+\s*[\.)]\s*", "", text)
-        return text.strip()
+        return clean_repertoire_title(value)
 
     def _normalize_repertoire_entries(self, raw_text: str) -> list:
-        lines = [l.strip() for l in str(raw_text or "").splitlines() if l.strip()]
-        entries = []
-        idx = 0
-        while idx + 1 < len(lines):
-            title = self._clean_repertoire_title(lines[idx])
-            sequence = lines[idx + 1].strip()
-            if title and sequence:
-                entries.append((title, sequence))
-            idx += 2
-        return entries
+        return normalize_repertoire_entries(raw_text)
 
     def _format_repertoire_entries(self, entries: list) -> str:
-        rows = []
-        for title, sequence in entries:
-            rows.append(str(title).strip())
-            rows.append(str(sequence).strip())
-        return "\n".join(rows).strip()
+        return format_repertoire_entries(entries)
 
     def _sequence_text_from_entries(self, sequence_entries: list) -> str:
-        chunks = []
-        for entry in sequence_entries:
-            if not isinstance(entry, dict):
-                continue
-            title = str(entry.get("title", "")).strip()
-            sequence = str(entry.get("sequence", "")).strip()
-            if title and sequence:
-                chunks.append(f"{title}\n{sequence}")
-        return "\n\n".join(chunks).strip()
+        return sequence_text_from_entries(sequence_entries)
 
     def _history_option_label(self, item: dict) -> str:
         week_start = str(item.get("week_start_date", "?"))

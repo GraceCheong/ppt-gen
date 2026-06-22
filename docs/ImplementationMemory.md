@@ -1,130 +1,200 @@
-# PO,RR 구현 메모 (2026-06-21)
+# PO,RR 구현 메모
 
-이 문서는 현재 코드베이스 기준으로, 지금까지 구현된 핵심 기능과 동작 방식을 빠르게 파악하기 위한 내부 메모입니다.
+> 이 문서는 현재 코드베이스 기준으로 구현된 핵심 기능과 동작 방식을 빠르게 파악하기 위한 내부 메모입니다.
+> 마지막 업데이트: 2026-06-22
 
-## 1) 제품 목적
+---
 
-- 예배 레파토리와 가사를 입력해 하나의 통합 PPT를 생성한다.
-- 추가로 송리스트 카드를 PNG로 생성한다.
-- GUI 클라이언트는 서버 우선, 실패 시 로컬 오피스 경로로 자동 전환한다.
+## 1. 제품 목적
 
-## 2) 전체 구조
+- 예배 레파토리와 가사를 입력해 통합 PPT를 생성한다.
+- 송리스트 카드(PNG)를 생성한다.
+- 웹 앱(React)과 데스크톱 앱(Tauri)에서 사용한다.
+- 레거시 GUI(CustomTkinter/ttkbootstrap)도 계속 지원한다.
 
-- GUI: `src/main_ctk.py` (현재 메인, CustomTkinter), `src/main_ttk.py` (ttkbootstrap 대안), `src/main.py` (레거시/빌드 진입점)
-- 생성 로직: `src/ppt_builder.py`, `src/ppt_service.py`, `src/songlist_builder.py`
-- 자동 가사 다운로드: `src/auto_lyrics_downloader.py`
-- 서버 통신: `src/ppt_server_client.py`
-- 서버(FastAPI): `server/convert_server.py`
-- 오류 리포팅: `src/error_reporter.py`
-- 배포/운영: `tools/release/build_release.py`, `tools/server/run-server.bat`, `docs/Service.md`
-- CI/CD: `.github/workflows/build.yml` (GitHub Actions, tag 기반 Windows/macOS 릴리스 자동 빌드)
+---
 
-## 3) 구현 완료 기능
+## 2. 전체 구조
 
-### 3-1. GUI 워크플로우
+```
+apps/web/          React + Vite 웹앱
+apps/desktop/      Tauri v2 데스크톱
 
-- 레파토리 입력/인식, 곡별 가사 편집, PPT 생성, 송리스트 카드 생성까지 단일 화면에서 처리.
-- 템플릿 드롭다운 자동 로딩 및 템플릿 프리뷰(썸네일/캐시 기반) 제공.
-- 템플릿 Google Drive 동기화(gdown) 및 수동 새로고침 버튼 제공.
-- 비동기 작업 중 진행 표시 제공.
+server/
+  app/             FastAPI 앱 (현재 메인 서버)
+    api/           라우터 (health, templates, lyrics, history, exports, jobs, errors)
+    services/      비즈니스 로직
+    jobs/          Job Store (메모리 기반)
+    workers/       PPT·송리스트 변환 워커
+    storage/       파일 출력 경로 관리
+  convert_server.py          레거시 엔드포인트 (GUI 호환용)
+  porr_server_main.py        단독 실행 진입점 (sidecar용)
 
-### 3-2. 레파토리 입력 모델
+src/
+  porr_core/       코어 로직 (repertoire, sequence, slide_estimator, schemas)
+  ppt_builder.py   PPT 생성 로직
+  ppt_service.py   PPT 생성 서비스
+  songlist_builder.py  송리스트 카드 생성
+  auto_lyrics_downloader.py  Bugs Music 크롤러
+  ppt_server_client.py       GUI ↔ 서버 통신
+  main_ttk.py      ttkbootstrap GUI (현재 주 GUI)
+  main.py          CustomTkinter GUI
+  constants.py     SERVER_PORT=8010 등
 
-- 자유 입력 텍스트를 제목/시퀀스 쌍으로 정규화해 구조로 관리.
-- 구분자(`-`)로 나뉜 파트 이름의 공백 제거 및 첫 글자 대문자 자동 통일 (`_normalize_sequence`).
-- 기존 DB에 저장된 시퀀스도 앱 기동 시 자동 정규화.
+tools/
+  build_sidecar.py  PyInstaller 패키징
+  server/run-server.bat  서버 실행 배치 (Task Scheduler용)
+```
 
-### 3-3. 통합 PPT 생성
+---
 
-- 템플릿에서 제목/가사 레이아웃을 찾아 슬라이드를 누적 생성.
-- 파트 시퀀스 파싱, 본문 줄 수 제한, 문자 수 기준 줄바꿈, 폰트 크기 적용 지원.
-- **레이아웃 placeholder 폰트 상속**: `add_slide()` 직후 빈 placeholder에 레이아웃의 `lstStyle`/`pPr`/`rPr`를 lxml로 직접 복사해 템플릿 폰트를 보존.
-- **마지막 연속 반복 파트 강조**: 시퀀스 마지막이 같은 파트로 연속 종료될 때(예: `…-C-C`) 해당 슬라이드 한 장만 생성하고 볼드 + 어두운 붉은색(`#8B1A1A`)으로 표시. 중간 반복(예: `V1-V1`)은 해당 없음.
-- PPT 생성 전 `integrated_lyrics.pptx`가 열려 있으면 닫으라는 팝업 표시.
+## 3. 주요 기능 현황
 
-### 3-4. 송리스트 카드 생성(PNG)
+### 3-1. Python 생성 로직
 
-- 송리스트용 템플릿에 곡 목록을 반영해 PPTX 생성 후 PNG 변환.
-- 주차(week) 컬러 계산과 텍스트/도형 컬러 반영.
-- 변환 경로 다중화: 서버/COM/LibreOffice.
+**통합 PPT 생성** (`ppt_builder.py`, `ppt_service.py`):
+- 템플릿에서 제목/가사 레이아웃 탐색 → 슬라이드 누적 생성
+- 파트 시퀀스 파싱, 줄 수 제한, 문자 수 기준 줄바꿈
+- **레이아웃 placeholder 폰트 상속**: `add_slide()` 직후 lxml로 `lstStyle/pPr/rPr` 복사
+- **마지막 연속 반복 파트 강조**: `…-C-C` → 마지막 C 슬라이드 1장만 생성, 볼드 + `#8B1A1A` (중간 반복 `V1-V1`은 일반 처리)
 
-### 3-5. 서버(FastAPI) 기능
+**송리스트 카드 생성** (`songlist_builder.py`):
+- 주차 컬러 계산, 텍스트/도형 반영, PPTX → PNG
+- COM 오류 시 해상도 축소 재시도, LibreOffice 경로: PPTX → PDF → 이미지
 
-- `/health`: 상태 및 COM 사용 가능 여부 제공.
-- `/convert`: PPTX 첫 슬라이드 PNG 변환.
-- `/generate-ppt`: 템플릿 + payload로 통합 PPT 생성. 성공 시 `lyrics_catalog` 자동 색인.
-- `/songlist-card`: 송리스트 카드 PNG 생성.
-- `/history/weekly`, `/history/db`: 주간 이력 조회/DB 다운로드.
-- `/client-error-report`: 클라이언트 오류 리포트 수집.
-- `/lyrics/search`, `/lyrics/by-title`, `POST /lyrics`: 가사 DB 검색/조회/저장.
+### 3-2. 레파토리 입력 모델 (`src/porr_core/`)
 
-### 3-6. 주간 이력 저장
+- 자유 입력 텍스트 → 제목/시퀀스 쌍으로 정규화
+- `_normalize_sequence`: 구분자 `-` 기준 파트 이름 공백 제거 + 첫 글자 대문자
+- 기존 DB 시퀀스도 앱 기동 시 자동 정규화
 
-- 서버에서 주차 기준(토요일 종료)으로 레파토리 스냅샷을 SQLite에 업서트 저장.
-- 클라이언트는 서버 이력을 동기화하고 로컬 캐시로 유지.
-- 과거 주차 이력을 UI에서 조회/적용 가능.
+### 3-3. FastAPI 서버 (`server/app/`)
 
-### 3-7. 오류 보고 체계
+**레거시 엔드포인트** (GUI 호환):
+```
+GET  /health              상태 + COM 사용 가능 여부
+POST /convert             PPTX 첫 슬라이드 → PNG
+POST /generate-ppt        통합 PPT 생성 + lyrics_catalog 자동 색인
+POST /songlist-card        송리스트 카드 PNG
+GET  /history/weekly      주간 이력 조회
+GET  /lyrics/search       가사 검색
+POST /lyrics              가사 저장
+```
 
-- 클라이언트 예외 훅(sys/threading/tkinter) 연동.
-- 오류 발생 시 컨텍스트/설정/상태/최근 로그를 포함해 서버로 비동기 전송.
-- 개인정보 민감도가 높은 가사 원문/레파토리 원문은 전송 대상에서 제외.
+**신규 API (`/api` prefix)**:
+```
+GET  /api/health
+GET  /api/templates
+POST /api/templates
+GET  /api/lyrics/search?q=&limit=
+GET  /api/lyrics/by-title?title=
+POST /api/lyrics
+POST /api/lyrics/bulk          ← title+sequence 일괄 upsert (빈 가사 허용)
+POST /api/lyrics/download      ← Bugs Music 크롤링
+GET  /api/history/weekly?year_from=
+POST /api/history/weekly       ← 이력 생성 + lyrics_catalog 자동 upsert
+PUT  /api/history/weekly/{date}/entries  ← 곡 목록 수정 (비밀번호)
+PUT  /api/history/weekly/{date}/roles    ← 담당자 수정 (비밀번호)
+GET  /api/history/db
+POST /api/exports/pptx
+POST /api/exports/songlist-card
+GET  /api/jobs/{job_id}
+GET  /api/jobs/{job_id}/download
+```
 
-### 3-8. 배포/운영 체계
+### 3-4. 주간 이력 (`server/app/api/history.py`, `history_service.py`)
 
-- PyInstaller 기반 Windows 단일 배포 패키지 생성 스크립트 제공.
-- 서버는 작업 스케줄러(Task Scheduler) 기반 상시 운영 문서화 (`docs/Service.md`).
+- 토요일(`week_end_date`) 기준 레파토리 스냅샷을 SQLite에 upsert 저장
+- 컬럼: `week_end_date`, `sequence_entries` (JSON), `worship_leader`, `accompanist`, `prayer_person`
+- 이력 저장·수정 시 `lyrics_catalog`에 자동 upsert (빈 가사, source='history')
+- 비밀번호 검증: `.env`의 `PORR_EDIT_PASSWORD` (`os.environ.get`, 서버 시작 시 로드)
 
-### 3-9. 자동 가사 다운로드
+### 3-5. 가사 카탈로그 DB (`lyrics_catalog` 테이블)
 
-- 레파토리 등록 후 Bugs Music 크롤링으로 가사 자동 수집 (`auto_lyrics_downloader.py`).
-- **조회 우선순위:** 메모리 → 서버 `lyrics_catalog` DB → Bugs 크롤링 → 크롤링 성공 시 catalog 저장.
-- 레파토리 새로고침 시 자동 트리거(auto=True) 및 버튼 수동 실행 모두 지원.
+**색인 경로:**
+- `/generate-ppt` PPT 생성 시 (source='history')
+- Bugs 크롤링 성공 시 (source='bugs')
+- 가사 편집 후 곡 전환 시 (source='manual')
+- 이력 저장·수정 시 (source='history')
 
-### 3-10. 가사 카탈로그 DB 연동 검색
+**upsert 정책** (`lyrics_service.py`):
+- 빈 가사로 upsert 시 기존 가사 보존: `CASE WHEN excluded.lyrics != '' THEN excluded.lyrics ELSE lyrics_catalog.lyrics END`
 
-- 서버 SQLite `lyrics_catalog` 테이블에 가사를 누적 저장 (title 정규화 키 기준 중복 방지).
-- **색인 경로:**
-  - PPT 생성(`/generate-ppt`) 시 스냅샷에서 자동 색인 (`source='history'`)
-  - Bugs 크롤링 성공 시 자동 저장 (`source='bugs'`)
-  - 가사 편집 후 곡 전환 시 백그라운드 저장 (`source='manual'`)
-- **서버 엔드포인트:**
-  - `GET /lyrics/search?q=검색어&limit=10` — 곡명 부분 일치 검색
-  - `GET /lyrics/by-title?title=곡명` — 정확한 곡명 조회 (404 = 없음)
-  - `POST /lyrics` — `{title, lyrics, source, sequence}` upsert
-- **GUI:** 셋리스트 패널 `DB에서 추가` 버튼 → 검색 팝업 (300ms debounce) → 선택 시 레파토리·가사 한 번에 채움.
+**검색 우선순위 (GUI)**: 메모리 → DB → Bugs 크롤링 → 성공 시 DB 저장
 
-## 4) 실패 대비(Fallback) 전략
+### 3-6. React 웹앱 (`apps/web/`)
 
-### 4-1. GUI 기준 변환/생성 fallback
+**페이지:**
+| 경로 | 기능 |
+|---|---|
+| `/app` | 3-panel 작업 화면 (SetlistPanel + LyricsEditor + DeckPanel) |
+| `/history` | 이력 (달력/목록 뷰) |
+| `/lyrics` | 가사 DB 검색·관리 |
+| `/graph` | 곡 관계도 |
+| `/templates` | 템플릿 관리 |
+
+**이력 달력 뷰** (`CalendarView.tsx`):
+- 월별 달력 그리드 + 선택된 토요일 상세 패널 (md:w-64)
+- 토요일 셀에 인도자 이름 인라인 표시
+- `isoWeekNum(dateStr)` / `formatWeekLabel(weekEndDate)` — `N주차, YY.MM.DD`
+- 자동 선택: 가장 가까운 미래 토요일
+
+**곡 관계도** (`GraphPage.tsx`):
+- `react-force-graph-2d` — ForceGraph2D
+- 노드 크기: `Math.max(10, Math.min(28, 10 + weight * 2.5))`
+- 노드 색상: min-max 정규화 → blue-300 → indigo-500 → violet-700
+- 클릭 시 D+N (마지막 사용 후 경과 일수) 표시
+- 링크 거리: 38 (D3 기본 30 × 1.25)
+- `graphData = useMemo(() => ({ nodes, links }), [nodes, links])` — 레퍼런스 고정 (hover 시 시뮬 리셋 방지)
+
+**기술 스택**: React 18, Vite, TypeScript, Tailwind v4, TanStack Query, Zustand, dnd-kit
+
+### 3-7. Fallback 전략 (GUI)
 
 1. 서버 우선 호출
-2. 서버 불가 시 로컬 PowerPoint COM
-3. COM 실패 시 LibreOffice
-4. 최종 실패 시 설치/복구 안내 표시
+2. 서버 불가 → 로컬 PowerPoint COM
+3. COM 실패 → LibreOffice
+4. 최종 실패 → 안내 메시지
 
-### 4-2. 송리스트 PNG 변환 안정화
+### 3-8. 오류 보고
 
-- COM 내보내기에서 메모리 관련 오류 발생 시 해상도 축소 재시도.
-- LibreOffice 경로는 PPTX → PDF → 이미지(렌더링) 경유.
+- 클라이언트 예외 훅(sys/threading/tkinter) 연동
+- 오류 발생 시 컨텍스트/설정/상태/최근 로그 포함 → 서버 비동기 전송
+- 가사 원문/레파토리 원문은 제외
 
-## 5) 데이터/산출물 위치
+### 3-9. 배포·운영
+
+- PyInstaller 기반 Windows 단일 배포 패키지
+- 서버: Task Scheduler `PPTGenServer` (`docs/Service.md`)
+- Tauri 데스크톱: sidecar 포함 패키지 (`tools/build_sidecar.py`)
+
+---
+
+## 4. 데이터·산출물 위치
 
 | 경로 | 내용 |
 |---|---|
 | `out/integrated_lyrics.pptx` | 생성된 통합 PPT |
+| `out/songlist/` | 송리스트 카드 PNG |
+| `out/jobs/` | Job 출력 파일 |
 | `out/error_reports/YYYY-MM-DD.jsonl` | 오류 리포트 |
 | `out/template_previews/` | 템플릿 썸네일 캐시 |
 | `logs/service.log` | 서버 로그 |
+| `weekly_repertoire.db` | SQLite (lyrics_catalog + weekly_repertoire) |
 
-## 6) 운영 포인트
+---
 
-- 서버 포트: `8010` (변경 시 `src/constants.py`의 `SERVER_PORT` 수정)
-- COM 사용이 필요한 작업은 실행 계정/권한 설정에 민감 → `docs/Service.md` 참고
-- `main_ctk.py` / `main_ttk.py` 실행은 Python 3.10(`venv310`) 필요
+## 5. 운영 포인트
 
-## 7) 참고 문서
+- 서버 포트: `8010` (변경: `src/constants.py`의 `SERVER_PORT`)
+- 비밀번호: `.env` → `PORR_EDIT_PASSWORD` (gitignore, 커밋 금지)
+- COM 작업은 실행 계정/권한 설정에 민감 → `docs/Service.md`
+- GUI 실행: Python 3.10 (`venv310`) 필요
 
-- `README.md`
-- `docs/Service.md`
-- `docs/Release.md`
+---
+
+## 6. 참고 문서
+
+- `docs/Service.md` — 서버 운영 (Task Scheduler)
+- `docs/ARCHITECTURE_MIGRATION.md` — 마이그레이션 이력 + 향후 계획
+- `CLAUDE.md` — 프로젝트 규칙 + 완료 작업 + API 목록

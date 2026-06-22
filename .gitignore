@@ -37,3 +37,6 @@ venv310/
 logs/
 
 *.tmp
+
+# Environment variables (contains secrets, never commit)
+.env
