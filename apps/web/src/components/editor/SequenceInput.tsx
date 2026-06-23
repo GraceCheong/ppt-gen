@@ -1,3 +1,5 @@
+import { CornerUpLeft } from 'lucide-react'
+
 interface Props {
   value: string
   onChange: (v: string) => void
@@ -19,14 +21,14 @@ export function SequenceInput({ value, onChange }: Props) {
   }
 
   return (
-    <div>
-      <div className="flex gap-1 flex-wrap mb-2">
+    <div className="flex flex-col gap-2.5">
+      <div className="flex gap-1.5 flex-wrap">
         {PRESETS.map(p => (
           <button
             key={p}
             type="button"
             onClick={() => appendPart(p)}
-            className="text-xs border border-gray-300 rounded px-2 py-1 hover:bg-gray-100 transition-colors"
+            className="text-[10px] font-bold border border-neutral-200 text-neutral-600 bg-white rounded-lg px-2.5 py-1.5 hover:bg-neutral-50 hover:border-neutral-300 transition-all cursor-pointer select-none font-mono"
           >
             {p}
           </button>
@@ -35,9 +37,10 @@ export function SequenceInput({ value, onChange }: Props) {
           <button
             type="button"
             onClick={removeLast}
-            className="text-xs border border-red-200 text-red-400 rounded px-2 py-1 hover:bg-red-50 transition-colors"
+            className="text-[10px] font-bold border border-danger-200 bg-white text-danger-500 rounded-lg px-2.5 py-1.5 hover:bg-danger-50 hover:border-danger-300 transition-all cursor-pointer flex items-center gap-1 select-none"
           >
-            ← 삭제
+            <CornerUpLeft className="w-3 h-3" />
+            <span>삭제</span>
           </button>
         )}
       </div>
@@ -45,16 +48,22 @@ export function SequenceInput({ value, onChange }: Props) {
         type="text"
         value={value}
         onChange={e => onChange(e.target.value)}
-        placeholder="I-V1-C-C"
-        className="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono outline-none focus:border-blue-400"
+        placeholder="예: I-V1-C-C-B-C"
+        className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs font-mono outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all uppercase placeholder:normal-case placeholder:text-neutral-400 text-neutral-800"
       />
       {parts.length > 0 && (
-        <div className="flex gap-1 mt-1.5 flex-wrap">
+        <div className="flex gap-1 flex-wrap items-center">
           {parts.map((p, i) => (
-            <span key={i} className="text-xs bg-gray-100 text-gray-600 rounded px-2 py-0.5">{p}</span>
+            <span 
+              key={i} 
+              className="text-[10px] font-bold bg-neutral-100 border border-neutral-200/50 text-neutral-600 font-mono rounded px-2 py-0.5 select-none"
+            >
+              {p}
+            </span>
           ))}
         </div>
       )}
     </div>
   )
 }
+

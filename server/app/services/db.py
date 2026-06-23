@@ -16,6 +16,9 @@ def history_db_path() -> str:
 def init_history_db() -> None:
     db_path = history_db_path()
     with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        # weekly_repertoire — church 컬럼 마이그레이션 전 임시 스키마로 생성
+        # (이미 존재하면 IF NOT EXISTS로 건너뜀)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS weekly_repertoire (
@@ -63,8 +66,13 @@ def init_history_db() -> None:
 
         _migrate_add_english_title(conn)
         _migrate_add_roles(conn)
+        _migrate_add_church(conn)
+        _migrate_create_auth_tables(conn)
+        _migrate_create_song_usage_events(conn)
         conn.commit()
 
+
+# ── 마이그레이션 함수들 ──────────────────────────────────────────────────────────
 
 def _migrate_add_roles(conn: sqlite3.Connection) -> None:
     """weekly_repertoire 에 담당자 컬럼 추가."""
@@ -76,6 +84,155 @@ def _migrate_add_roles(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError:
             pass  # 이미 존재
 
+
+def _migrate_add_church(conn: sqlite3.Connection) -> None:
+    """weekly_repertoire 를 (church, week_end_date) 복합 PK로 재구성."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(weekly_repertoire)").fetchall()}
+    if "church" in cols:
+        return  # 이미 완료
+
+    # 이전 시도에서 남은 임시 테이블 정리
+    conn.execute("DROP TABLE IF EXISTS weekly_repertoire_new")
+
+    has_roles = "worship_leader" in cols
+
+    conn.execute(
+        """
+        CREATE TABLE weekly_repertoire_new (
+            church TEXT NOT NULL DEFAULT '서울중앙',
+            week_end_date TEXT NOT NULL,
+            week_start_date TEXT NOT NULL,
+            updated_at_utc TEXT NOT NULL,
+            sequence_entries_json TEXT NOT NULL,
+            lyrics_by_title_json TEXT NOT NULL,
+            max_lines_per_slide INTEGER,
+            max_chars_per_line INTEGER,
+            lyrics_font_size TEXT,
+            worship_leader TEXT NOT NULL DEFAULT '',
+            accompanist TEXT NOT NULL DEFAULT '',
+            prayer_person TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (church, week_end_date)
+        )
+        """
+    )
+
+    if has_roles:
+        conn.execute(
+            """
+            INSERT INTO weekly_repertoire_new
+                (church, week_end_date, week_start_date, updated_at_utc,
+                 sequence_entries_json, lyrics_by_title_json,
+                 max_lines_per_slide, max_chars_per_line, lyrics_font_size,
+                 worship_leader, accompanist, prayer_person)
+            SELECT '서울중앙', week_end_date, week_start_date, updated_at_utc,
+                   sequence_entries_json, lyrics_by_title_json,
+                   max_lines_per_slide, max_chars_per_line, lyrics_font_size,
+                   worship_leader, accompanist, prayer_person
+            FROM weekly_repertoire
+            """
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO weekly_repertoire_new
+                (church, week_end_date, week_start_date, updated_at_utc,
+                 sequence_entries_json, lyrics_by_title_json,
+                 max_lines_per_slide, max_chars_per_line, lyrics_font_size)
+            SELECT '서울중앙', week_end_date, week_start_date, updated_at_utc,
+                   sequence_entries_json, lyrics_by_title_json,
+                   max_lines_per_slide, max_chars_per_line, lyrics_font_size
+            FROM weekly_repertoire
+            """
+        )
+
+    conn.execute("DROP TABLE weekly_repertoire")
+    conn.execute("ALTER TABLE weekly_repertoire_new RENAME TO weekly_repertoire")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_history_church_date ON weekly_repertoire(church, week_end_date)"
+    )
+
+
+def _migrate_create_auth_tables(conn: sqlite3.Connection) -> None:
+    """users 및 auth_sessions 테이블 생성."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            church TEXT NOT NULL,
+            nickname TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_used_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """
+    )
+
+
+def _migrate_create_song_usage_events(conn: sqlite3.Connection) -> None:
+    """song_usage_events 테이블 생성 및 기존 이력 backfill."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS song_usage_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            church TEXT NOT NULL,
+            week_end_date TEXT,
+            song_key TEXT NOT NULL,
+            title TEXT NOT NULL,
+            used_date TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sue_church_song ON song_usage_events(church, song_key)"
+    )
+
+    # 기존 weekly_repertoire 데이터 backfill (아직 없을 때만)
+    existing = conn.execute("SELECT COUNT(*) FROM song_usage_events").fetchone()[0]
+    if existing > 0:
+        return
+
+    import json
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    rows = conn.execute(
+        "SELECT church, week_end_date, sequence_entries_json FROM weekly_repertoire"
+    ).fetchall()
+
+    for church, week_end_date, seq_json in rows:
+        try:
+            entries = json.loads(seq_json or "[]")
+        except Exception:
+            continue
+        for entry in entries:
+            title = str(entry.get("title") or "").strip()
+            if not title:
+                continue
+            song_key = title.lower()
+            conn.execute(
+                """
+                INSERT INTO song_usage_events
+                    (church, week_end_date, song_key, title, used_date, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (church, week_end_date, song_key, title, week_end_date, now),
+            )
+
+
+# ── 내부 헬퍼 ────────────────────────────────────────────────────────────────
 
 _SOURCE_PRIORITY = {"manual": 0, "history": 1, "bugs": 2}
 

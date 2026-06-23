@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { updateHistoryRoles, type WeeklyHistoryItem } from '../../api/history'
 import { TIPS } from '../../constants/tooltips'
+import { ChevronLeft, ChevronRight, X, User, Music, BookOpen, Edit, Plus, FolderOpen, AlertCircle } from 'lucide-react'
 
 // ── 날짜 유틸 ─────────────────────────────────────────────────────────────────
 
@@ -28,7 +29,7 @@ export function isoWeekNum(dateStr: string): number {
 export function formatWeekLabel(weekEndDate: string): string {
   const week = isoWeekNum(weekEndDate)
   const [y, m, d] = weekEndDate.split('-')
-  return `${week}주차, ${y.slice(2)}.${m}.${d}`
+  return `${week}주차 (${y.slice(2)}.${m}.${d})`
 }
 
 // 이번 달 가장 가까운 토요일 (오늘 포함)
@@ -60,7 +61,6 @@ function RolesEditModal({
   onClose: () => void
   onSaved: () => void
 }) {
-  const [password, setPassword] = useState('')
   const [worshipLeader, setWorshipLeader] = useState(existing?.worship_leader ?? '')
   const [accompanist, setAccompanist] = useState(existing?.accompanist ?? '')
   const [prayerPerson, setPrayerPerson] = useState(existing?.prayer_person ?? '')
@@ -68,10 +68,9 @@ function RolesEditModal({
   const [error, setError] = useState<string | null>(null)
 
   async function handleSave() {
-    if (!password) { setError('비밀번호를 입력하세요.'); return }
     setSaving(true); setError(null)
     try {
-      await updateHistoryRoles(weekEndDate, { password, worship_leader: worshipLeader, accompanist, prayer_person: prayerPerson })
+      await updateHistoryRoles(weekEndDate, { worship_leader: worshipLeader, accompanist, prayer_person: prayerPerson })
       onSaved(); onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : '저장 실패')
@@ -80,43 +79,44 @@ function RolesEditModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/40 backdrop-blur-xs px-4" onClick={onClose}>
+      <div className="bg-white border border-neutral-200/80 rounded-2xl shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b border-neutral-100">
           <div>
-            <h2 className="text-sm font-semibold text-gray-800">담당자 입력</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{formatWeekLabel(weekEndDate)}</p>
+            <h2 className="text-sm font-bold text-neutral-900 font-sans">담당 예배 팀원 구성</h2>
+            <p className="text-[11px] text-neutral-400 mt-0.5">{formatWeekLabel(weekEndDate)}</p>
           </div>
-          <button onClick={onClose} title={TIPS.calendar.rolesClose} className="text-gray-300 hover:text-gray-500 text-lg">✕</button>
+          <button 
+            onClick={onClose} 
+            title={TIPS.calendar.rolesClose} 
+            className="text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 rounded-lg p-1.5 transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <div className="px-5 py-4 space-y-3">
-          <div>
-            <label className="text-xs text-gray-500 block mb-1">비밀번호 *</label>
-            <input type="password" value={password} autoFocus
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSave()}
-              className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-400"
-              placeholder="비밀번호 입력" />
-          </div>
+        <div className="px-6 py-4 space-y-4">
           {[
-            { label: '인도자', val: worshipLeader, set: setWorshipLeader },
-            { label: '반주자', val: accompanist, set: setAccompanist },
-            { label: '기도자', val: prayerPerson, set: setPrayerPerson },
-          ].map(({ label, val, set }) => (
-            <div key={label}>
-              <label className="text-xs text-gray-500 block mb-1">{label}</label>
+            { label: '찬양 인도자 (Leader)', val: worshipLeader, set: setWorshipLeader, icon: <User className="w-3.5 h-3.5 text-neutral-400" /> },
+            { label: '메인 반주자 (Keyboard)', val: accompanist, set: setAccompanist, icon: <Music className="w-3.5 h-3.5 text-neutral-400" /> },
+            { label: '예배 대표 기도자 (Prayer)', val: prayerPerson, set: setPrayerPerson, icon: <BookOpen className="w-3.5 h-3.5 text-neutral-400" /> },
+          ].map(({ label, val, set, icon }) => (
+            <div key={label} className="flex flex-col gap-1.5">
+              <label className="text-[11px] font-bold text-neutral-500 flex items-center gap-1.5">
+                {icon}
+                <span>{label}</span>
+              </label>
               <input type="text" value={val} onChange={e => set(e.target.value)}
-                className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm outline-none focus:border-blue-400"
-                placeholder="이름" />
+                className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all placeholder:text-neutral-400 text-neutral-800"
+                placeholder="담당자 이름 입력" />
             </div>
           ))}
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && <p className="text-xs text-danger-500 font-medium">{error}</p>}
         </div>
-        <div className="px-5 pb-5 pt-3 border-t border-gray-100 flex gap-2 justify-end">
-          <button onClick={onClose} title={TIPS.calendar.rolesCancel} className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50">취소</button>
+        <div className="px-6 pb-5 pt-3 border-t border-neutral-100 flex gap-2 justify-end">
+          <button onClick={onClose} title={TIPS.calendar.rolesCancel} className="text-xs font-semibold border border-neutral-200 text-neutral-700 rounded-xl px-4 py-2.5 hover:bg-neutral-50 cursor-pointer">취소</button>
           <button onClick={handleSave} disabled={saving} title={TIPS.calendar.rolesSave}
-            className="text-sm bg-blue-500 text-white rounded px-3 py-1.5 hover:bg-blue-600 disabled:opacity-40">
-            {saving ? '저장 중...' : '저장'}
+            className="text-xs font-semibold bg-primary-600 text-white rounded-xl px-4 py-2.5 hover:bg-primary-700 disabled:opacity-40 cursor-pointer">
+            {saving ? '저장 중...' : '저장 완료'}
           </button>
         </div>
       </div>
@@ -139,84 +139,113 @@ function DetailPanel({
   const hasRoles = item && (item.worship_leader || item.accompanist || item.prayer_person)
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-white select-none">
       {/* 헤더 */}
-      <div className="px-4 py-3 border-b border-gray-100 shrink-0">
-        <p className="text-sm font-semibold text-blue-600">{label}</p>
-        {item && <p className="text-xs text-gray-400 mt-0.5">{item.sequence_entries.length}곡</p>}
+      <div className="px-5 py-4 border-b border-neutral-100 shrink-0 bg-neutral-50/20">
+        <p className="text-xs font-bold text-primary-600 tracking-tight">{label}</p>
+        {item && <p className="text-[10px] text-neutral-400 font-bold mt-1 uppercase tracking-wider">{item.sequence_entries.length}곡 저장됨</p>}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto divide-y divide-neutral-100">
         {item ? (
           <>
             {/* 담당자 */}
-            <div className="px-4 py-3 border-b border-gray-100">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">담당자</span>
+            <div className="px-5 py-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">담당 팀원</span>
                 <button onClick={onEditRoles}
                   title={TIPS.calendar.rolesEdit}
-                  className="text-[10px] text-blue-400 hover:text-blue-600">수정</button>
+                  className="text-[11px] font-bold text-primary-500 hover:text-primary-600 flex items-center gap-1 cursor-pointer">
+                  <Edit className="w-3 h-3" />
+                  <span>수정</span>
+                </button>
               </div>
+              
               {hasRoles ? (
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {item.worship_leader && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-gray-400 w-10">인도자</span>
-                      <span className="text-sm font-bold text-gray-800">{item.worship_leader}</span>
+                    <div className="flex items-center gap-2.5 bg-neutral-50/50 border border-neutral-200/40 rounded-xl p-2.5">
+                      <div className="w-6 h-6 rounded-lg bg-primary-50 flex items-center justify-center shrink-0">
+                        <User className="w-3.5 h-3.5 text-primary-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-neutral-400 font-bold">인도자</p>
+                        <p className="text-xs font-bold text-neutral-800 truncate">{item.worship_leader}</p>
+                      </div>
                     </div>
                   )}
                   {item.accompanist && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-gray-400 w-10">반주자</span>
-                      <span className="text-sm text-gray-700">{item.accompanist}</span>
+                    <div className="flex items-center gap-2.5 bg-neutral-50/50 border border-neutral-200/40 rounded-xl p-2.5">
+                      <div className="w-6 h-6 rounded-lg bg-neutral-50 flex items-center justify-center shrink-0">
+                        <Music className="w-3.5 h-3.5 text-neutral-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-neutral-400 font-bold">반주자</p>
+                        <p className="text-xs font-semibold text-neutral-700 truncate">{item.accompanist}</p>
+                      </div>
                     </div>
                   )}
                   {item.prayer_person && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-gray-400 w-10">기도자</span>
-                      <span className="text-sm text-gray-700">{item.prayer_person}</span>
+                    <div className="flex items-center gap-2.5 bg-neutral-50/50 border border-neutral-200/40 rounded-xl p-2.5">
+                      <div className="w-6 h-6 rounded-lg bg-neutral-50 flex items-center justify-center shrink-0">
+                        <BookOpen className="w-3.5 h-3.5 text-neutral-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-neutral-400 font-bold">기도자</p>
+                        <p className="text-xs font-semibold text-neutral-700 truncate">{item.prayer_person}</p>
+                      </div>
                     </div>
                   )}
                 </div>
               ) : (
                 <button onClick={onEditRoles}
                   title={TIPS.calendar.rolesAdd}
-                  className="text-xs text-blue-400 hover:text-blue-600">+ 담당자 입력</button>
+                  className="text-xs font-semibold text-primary-500 hover:text-primary-600 border border-primary-200/40 hover:bg-primary-50/30 rounded-xl py-2 cursor-pointer transition-all flex items-center justify-center gap-1">
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>예배 담당자 구성</span>
+                </button>
               )}
             </div>
 
             {/* 셋리스트 */}
-            <div className="px-4 py-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">셋리스트</span>
+            <div className="px-5 py-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">찬양 셋리스트</span>
                 <button onClick={onEditEntries}
                   title={TIPS.calendar.entriesEdit}
-                  className="text-[10px] text-blue-400 hover:text-blue-600">수정</button>
+                  className="text-[11px] font-bold text-primary-500 hover:text-primary-600 flex items-center gap-1 cursor-pointer">
+                  <Edit className="w-3 h-3" />
+                  <span>수정</span>
+                </button>
               </div>
+              
               {item.sequence_entries.length > 0 ? (
-                <ol className="space-y-2.5">
+                <ol className="space-y-2">
                   {item.sequence_entries.map((e, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-xs text-gray-300 w-4 text-right shrink-0 pt-0.5">{i + 1}</span>
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-sm text-gray-800 leading-tight">{e.title}</span>
-                        {e.sequence && <span className="text-[10px] text-gray-400 mt-0.5">{e.sequence}</span>}
+                    <li key={i} className="flex gap-3 items-center bg-neutral-50/40 border border-neutral-100 rounded-xl p-2.5 hover:bg-neutral-50/80 transition-all">
+                      <span className="text-[10px] font-bold bg-neutral-200 text-neutral-600 w-5 h-5 flex items-center justify-center rounded-full shrink-0 select-none">{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-bold text-neutral-800 leading-tight block truncate">{e.title}</span>
+                        {e.sequence && (
+                          <span className="inline-block text-[9px] font-bold font-mono bg-neutral-200/60 text-neutral-500 rounded px-1 mt-1">{e.sequence}</span>
+                        )}
                       </div>
                     </li>
                   ))}
                 </ol>
               ) : (
-                <p className="text-xs text-gray-400">셋리스트 미등록</p>
+                <p className="text-xs text-neutral-400 py-2">셋리스트가 아직 없습니다.</p>
               )}
             </div>
           </>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full px-4 py-8 text-center gap-3">
-            <p className="text-xs text-gray-400">등록된 내용이 없습니다</p>
+          <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-3">
+            <AlertCircle className="w-6 h-6 text-neutral-300 animate-pulse" />
+            <p className="text-xs font-semibold text-neutral-700">기록된 데이터가 없습니다</p>
             <button onClick={onEditRoles}
               title={TIPS.calendar.rolesRegister}
-              className="text-xs text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-3 py-1.5">
-              + 담당자 등록
+              className="text-xs font-semibold text-primary-500 hover:text-primary-600 border border-primary-200 hover:bg-primary-50/40 rounded-xl px-4 py-2 cursor-pointer transition-all">
+              + 예배 담당자 등록
             </button>
           </div>
         )}
@@ -224,11 +253,12 @@ function DetailPanel({
 
       {/* 하단 액션 */}
       {item && (
-        <div className="px-4 py-3 border-t border-gray-100 shrink-0">
+        <div className="px-5 py-4 border-t border-neutral-100 shrink-0 bg-neutral-50/20">
           <button onClick={() => onLoad(item)}
             title={TIPS.calendar.load}
-            className="w-full text-sm font-medium bg-blue-500 text-white rounded py-2 hover:bg-blue-600 transition-colors">
-            불러오기
+            className="w-full text-xs font-bold bg-primary-600 text-white rounded-xl py-3 hover:bg-primary-700 shadow-md shadow-primary-600/5 hover:shadow-lg hover:shadow-primary-600/15 active:bg-primary-800 transition-all flex items-center justify-center gap-1.5 cursor-pointer">
+            <FolderOpen className="w-3.5 h-3.5" />
+            <span>셋리스트 불러오기</span>
           </button>
         </div>
       )}
@@ -298,43 +328,43 @@ export function CalendarView({ history, onLoad, onEditEntries }: Props) {
   const selectedItem = selectedDate ? (byDate.get(selectedDate) ?? null) : null
 
   return (
-    <div className="flex flex-col md:flex-row flex-1 min-h-0 md:overflow-hidden">
+    <div className="flex flex-col md:flex-row flex-1 min-h-0 md:overflow-hidden bg-white select-none">
 
       {/* ── 달력 (주인공) ── */}
-      <div className="flex flex-col flex-1 min-w-0 md:overflow-hidden">
+      <div className="flex flex-col flex-1 min-w-0 md:overflow-hidden border-b md:border-b-0 md:border-r border-neutral-100">
 
         {/* 월 네비게이션 */}
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-neutral-100 shrink-0 bg-neutral-50/20">
           <button onClick={prevMonth}
             title={TIPS.calendar.prevMonth}
-            className="text-gray-400 hover:text-gray-700 w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 transition-colors text-lg">
-            ‹
+            className="text-neutral-400 hover:text-neutral-700 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-neutral-100 transition-all cursor-pointer">
+            <ChevronLeft className="w-5 h-5" />
           </button>
-          <span className="flex-1 text-center text-sm font-semibold text-gray-700">
+          <span className="flex-1 text-center text-xs font-bold text-neutral-800 select-none">
             {year}년 {month + 1}월
           </span>
           <button onClick={nextMonth}
             title={TIPS.calendar.nextMonth}
-            className="text-gray-400 hover:text-gray-700 w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 transition-colors text-lg">
-            ›
+            className="text-neutral-400 hover:text-neutral-700 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-neutral-100 transition-all cursor-pointer">
+            <ChevronRight className="w-5 h-5" />
           </button>
         </div>
 
         {/* 요일 헤더 */}
-        <div className="grid grid-cols-7 border-b border-gray-100 shrink-0">
+        <div className="grid grid-cols-7 border-b border-neutral-100 shrink-0 bg-neutral-50/20 divide-x divide-neutral-100/30">
           {DOW.map((d, i) => (
-            <div key={d} className={`py-2 text-center text-xs font-medium
-              ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-500' : 'text-gray-400'}`}>
+            <div key={d} className={`py-2 text-center text-[10px] font-bold select-none uppercase tracking-wider
+              ${i === 0 ? 'text-danger-500' : i === 6 ? 'text-primary-500' : 'text-neutral-400'}`}>
               {d}
             </div>
           ))}
         </div>
 
         {/* 날짜 격자 */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="grid grid-cols-7 h-full" style={{ gridAutoRows: 'minmax(72px, 1fr)' }}>
+        <div className="flex-1 overflow-y-auto bg-neutral-50/10">
+          <div className="grid grid-cols-7 h-full divide-y divide-x divide-neutral-100/50" style={{ gridAutoRows: 'minmax(84px, 1fr)' }}>
             {days.map((date, i) => {
-              if (!date) return <div key={`e-${i}`} className="border-b border-r border-gray-50 bg-gray-50/30" />
+              if (!date) return <div key={`e-${i}`} className="border-b border-r border-neutral-100/30 bg-neutral-50/30" />
               const dow = date.getDay()
               const isSat = dow === 6
               const isSun = dow === 0
@@ -347,33 +377,45 @@ export function CalendarView({ history, onLoad, onEditEntries }: Props) {
                 <div
                   key={ds}
                   onClick={() => isSat && setSelectedDate(ds)}
-                  className={`border-b border-r border-gray-100 p-1.5 flex flex-col transition-colors
+                  className={`border-b border-r border-neutral-100/50 p-2.5 flex flex-col justify-between transition-all duration-150 relative
                     ${isSat ? 'cursor-pointer' : ''}
-                    ${isSelected ? 'bg-blue-50 border-blue-200' : isSat ? 'hover:bg-blue-50/50' : ''}
+                    ${isSelected ? 'bg-primary-50/30 border-r border-b border-primary-200/50' : isSat ? 'hover:bg-neutral-50 bg-white' : 'bg-white'}
                   `}
                 >
                   {/* 날짜 숫자 */}
-                  <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-medium self-start
-                    ${isToday ? 'bg-blue-500 text-white' : isSelected && isSat ? 'bg-blue-500 text-white' : isSat ? 'text-blue-600' : isSun ? 'text-red-400' : 'text-gray-600'}
+                  <span className={`w-6 h-6 flex items-center justify-center rounded-lg text-xs font-bold self-start select-none
+                    ${isToday 
+                      ? 'bg-primary-600 text-white shadow-md shadow-primary-600/10' 
+                      : isSelected && isSat 
+                      ? 'bg-primary-100 text-primary-700 border border-primary-300/30' 
+                      : isSat 
+                      ? 'text-primary-600' 
+                      : isSun 
+                      ? 'text-danger-500' 
+                      : 'text-neutral-600'}
                   `}>
                     {date.getDate()}
                   </span>
 
                   {/* 토요일: 인도자 이름 미리보기 */}
                   {isSat && item?.worship_leader && (
-                    <span className={`text-[10px] mt-1 font-semibold truncate leading-tight
-                      ${isSelected ? 'text-blue-700' : 'text-gray-600'}`}>
+                    <span className={`text-[10px] font-bold truncate leading-tight rounded-md px-1.5 py-0.5 border select-none w-full text-center mt-2
+                      ${isSelected 
+                        ? 'text-primary-700 bg-primary-100/50 border-primary-200/30' 
+                        : 'text-neutral-600 bg-neutral-100/80 border-neutral-200/40'}`}>
                       {item.worship_leader}
                     </span>
                   )}
                   {isSat && item && !item.worship_leader && item.sequence_entries.length > 0 && (
-                    <span className={`text-[10px] mt-1 truncate leading-tight
-                      ${isSelected ? 'text-blue-500' : 'text-gray-400'}`}>
+                    <span className={`text-[10px] font-semibold truncate leading-tight rounded-md px-1.5 py-0.5 border select-none w-full text-center mt-2
+                      ${isSelected 
+                        ? 'text-primary-500 bg-primary-50/50 border-primary-200/30' 
+                        : 'text-neutral-400 bg-neutral-50/50 border-neutral-200/30'}`}>
                       {item.sequence_entries.length}곡
                     </span>
                   )}
                   {isSat && !item && (
-                    <span className="text-[10px] mt-1 text-gray-200">미등록</span>
+                    <span className="text-[9px] font-bold text-neutral-300 mt-2 select-none self-end">미등록</span>
                   )}
                 </div>
               )
@@ -383,7 +425,7 @@ export function CalendarView({ history, onLoad, onEditEntries }: Props) {
       </div>
 
       {/* ── 오른쪽 상세 패널 ── */}
-      <div className="md:w-64 lg:w-72 shrink-0 border-t md:border-t-0 md:border-l border-gray-100 flex flex-col min-h-[280px] md:min-h-0">
+      <div className="md:w-68 lg:w-76 shrink-0 flex flex-col min-h-[300px] md:min-h-0">
         {selectedDate ? (
           <DetailPanel
             dateStr={selectedDate}
@@ -393,8 +435,9 @@ export function CalendarView({ history, onLoad, onEditEntries }: Props) {
             onEditEntries={() => selectedItem && onEditEntries(selectedItem)}
           />
         ) : (
-          <div className="flex items-center justify-center flex-1 text-xs text-gray-300 px-4 text-center">
-            토요일을 선택하면 상세 내용이 표시됩니다
+          <div className="flex flex-col items-center justify-center flex-1 text-xs text-neutral-400 px-4 py-8 text-center gap-2 bg-neutral-50/20 select-none">
+            <AlertCircle className="w-5 h-5 text-neutral-300 animate-pulse" />
+            <span>토요일을 선택하시면 해당 주의 상세 정보가 표시됩니다</span>
           </div>
         )}
       </div>
@@ -411,3 +454,4 @@ export function CalendarView({ history, onLoad, onEditEntries }: Props) {
     </div>
   )
 }
+

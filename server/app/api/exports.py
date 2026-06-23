@@ -8,8 +8,12 @@ import os
 import tempfile
 import time
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
+
+from server.app.api.deps import get_optional_auth_context
+from server.app.config import MAX_UPLOAD_BYTES
+from server.app.models.auth import AuthContext
 from pptx import Presentation
 
 from server.app import state
@@ -69,6 +73,8 @@ async def _save_upload(upload: UploadFile, path: str) -> None:
     data = await upload.read()
     if not data:
         raise HTTPException(400, detail="업로드된 파일이 비어 있습니다.")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, detail=f"파일 크기가 {MAX_UPLOAD_BYTES // (1024*1024)}MB를 초과합니다.")
     with open(path, "wb") as f:
         f.write(data)
 
@@ -77,6 +83,8 @@ async def _save_upload_atomic(upload: UploadFile, path: str) -> None:
     data = await upload.read()
     if not data:
         raise HTTPException(400, detail="업로드된 파일이 비어 있습니다.")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, detail=f"파일 크기가 {MAX_UPLOAD_BYTES // (1024*1024)}MB를 초과합니다.")
     target_abs = os.path.abspath(path)
     target_dir = os.path.dirname(target_abs)
     os.makedirs(target_dir, exist_ok=True)
@@ -167,7 +175,8 @@ async def convert(file: UploadFile = File(...)):
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(state.executor, _convert_sync, pptx_path, png_path)
         except Exception as e:
-            raise HTTPException(500, detail=f"변환 실패: [{type(e).__name__}] {e}")
+            logger.error("[convert] 변환 실패: %s", e)
+            raise HTTPException(500, detail="슬라이드 변환에 실패했습니다.")
 
         if not os.path.exists(png_path):
             raise HTTPException(500, detail="PNG 출력 파일을 찾을 수 없습니다.")
@@ -180,7 +189,11 @@ async def convert(file: UploadFile = File(...)):
 
 
 @router.post("/generate-ppt", response_class=Response)
-async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...)):
+async def generate_ppt(
+    payload: str = Form(...),
+    template: UploadFile = File(...),
+    auth: AuthContext = Depends(get_optional_auth_context),
+):
     """템플릿과 레파토리/가사 데이터를 받아 PPTX 파일을 생성해 반환합니다."""
     if not (template.filename or "").lower().endswith(".pptx"):
         raise HTTPException(400, detail="PPTX 템플릿만 허용됩니다.")
@@ -230,7 +243,8 @@ async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...
         except NoLyricsError as e:
             raise HTTPException(400, detail=str(e))
         except Exception as e:
-            raise HTTPException(500, detail=f"PPT 생성 실패: {e}")
+            logger.error("[generate-ppt] PPT 생성 실패: %s", e)
+            raise HTTPException(500, detail="PPT 생성에 실패했습니다.")
 
         if not os.path.exists(output_path):
             raise HTTPException(500, detail="PPTX 출력 파일을 찾을 수 없습니다.")
@@ -243,18 +257,20 @@ async def generate_ppt(payload: str = Form(...), template: UploadFile = File(...
         result["appended_count"],
         len(result.get("skipped_titles", [])),
     )
-    try:
-        saved_week = save_weekly_repertoire_snapshot(
-            sequence_entries=sequence_entries,
-            lyrics_by_title=lyrics_by_title,
-            max_lines_per_slide=max_lines_per_slide,
-            max_chars_per_line=max_chars_per_line,
-            lyrics_font_size=lyrics_font_size,
-        )
-        logger.info("[history] 주간 이력 저장 완료 week_end=%s", saved_week)
-        index_lyrics_from_snapshot(sequence_entries, lyrics_by_title)
-    except Exception as e:
-        logger.warning("[history] 주간 이력 저장 실패: %s", e)
+    if auth.mode == "user" and auth.church:
+        try:
+            saved_week = save_weekly_repertoire_snapshot(
+                sequence_entries=sequence_entries,
+                lyrics_by_title=lyrics_by_title,
+                max_lines_per_slide=max_lines_per_slide,
+                max_chars_per_line=max_chars_per_line,
+                lyrics_font_size=lyrics_font_size,
+                church=auth.church,
+            )
+            logger.info("[history] 주간 이력 저장 완료 week_end=%s church=%s", saved_week, auth.church)
+            index_lyrics_from_snapshot(sequence_entries, lyrics_by_title)
+        except Exception as e:
+            logger.warning("[history] 주간 이력 저장 실패: %s", e)
 
     return Response(
         content=pptx_data,
@@ -305,10 +321,11 @@ async def songlist_card(
             except LocalOfficeUnavailable as e:
                 raise HTTPException(
                     503,
-                    detail=f"송리스트 카드 생성 실패(로컬 오피스 사용 불가): {e}",
+                    detail=f"로컬 오피스(LibreOffice/PowerPoint)를 사용할 수 없습니다: {e}",
                 )
             except Exception as e:
-                raise HTTPException(500, detail=f"송리스트 카드 생성 실패: {e}")
+                logger.error("[songlist-card] 생성 실패: %s", e)
+                raise HTTPException(500, detail="송리스트 카드 생성에 실패했습니다.")
 
             if not os.path.exists(output_path):
                 raise HTTPException(500, detail="PNG 출력 파일을 찾을 수 없습니다.")
@@ -331,7 +348,10 @@ async def songlist_card(
 # ── 비동기 Job 기반 API ──────────────────────────────────────────────────────
 
 @router.post("/api/exports/pptx")
-async def api_export_pptx(request: Request):
+async def api_export_pptx(
+    request: Request,
+    auth: AuthContext = Depends(get_optional_auth_context),
+):
     """JSON 기반 비동기 PPT 생성 Job API.
 
     template_id로 서버에 있는 템플릿을 지정한다 (파일 업로드 불필요).

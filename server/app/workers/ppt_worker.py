@@ -7,10 +7,7 @@ import logging
 from server.app import state
 from server.app.jobs.job_models import JobStatus
 from server.app.jobs.job_store import update_job
-from server.app.services.history_service import (
-    index_lyrics_from_snapshot,
-    save_weekly_repertoire_snapshot,
-)
+from server.app.services.history_service import index_lyrics_from_snapshot
 from server.app.services.ppt_generation_service import build_integrated_pptx
 from server.app.storage.local_storage import get_generated_pptx_path
 
@@ -47,18 +44,11 @@ async def run_pptx_job(
             lyrics_font_size,
         )
 
+        # 가사 카탈로그 색인 (이력 저장과 무관하게 항상 실행)
         try:
-            saved_week = save_weekly_repertoire_snapshot(
-                sequence_entries=sequence_entries,
-                lyrics_by_title=lyrics_by_title,
-                max_lines_per_slide=max_lines_per_slide,
-                max_chars_per_line=max_chars_per_line,
-                lyrics_font_size=lyrics_font_size,
-            )
-            logger.info("[job:%s] 이력 저장 week_end=%s", job_id, saved_week)
             index_lyrics_from_snapshot(sequence_entries, lyrics_by_title)
-        except Exception as hist_err:
-            logger.warning("[job:%s] 이력 저장 실패: %s", job_id, hist_err)
+        except Exception as idx_err:
+            logger.warning("[job:%s] 가사 색인 실패: %s", job_id, idx_err)
 
         update_job(
             job_id,

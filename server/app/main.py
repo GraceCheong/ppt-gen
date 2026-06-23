@@ -38,6 +38,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("[startup] DB 초기화 실패 (무시하고 계속): %s", e)
 
+    try:
+        from server.app.services.auth_service import cleanup_expired_sessions
+        removed = cleanup_expired_sessions()
+        if removed:
+            logger.info("[startup] 만료 세션 %d건 삭제", removed)
+    except Exception as e:
+        logger.warning("[startup] 만료 세션 정리 실패 (무시): %s", e)
+
     # asyncio.Lock은 이벤트 루프 안에서만 생성 가능
     app.state.songlist_lock = asyncio.Lock()
 
@@ -60,13 +68,32 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     import os
-    from server.app.api import health, lyrics, history, exports, errors, jobs, templates
+    from fastapi.middleware.cors import CORSMiddleware
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from server.app.api import health, lyrics, history, exports, errors, jobs, templates, auth, graph
+    from server.app.api.rate_limit import limiter
 
     app = FastAPI(title="PO,RR PPT Gen Server", lifespan=lifespan)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+    # CORS — PORR_CORS_ORIGINS 환경변수로 제어 (기본: Vite dev server)
+    from server.app.config import CORS_ORIGINS
+    if CORS_ORIGINS:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=CORS_ORIGINS,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    app.include_router(auth.router)
     app.include_router(health.router)
     app.include_router(lyrics.router)
     app.include_router(history.router)
+    app.include_router(graph.router)
     app.include_router(templates.router)
     app.include_router(exports.router)
     app.include_router(errors.router)

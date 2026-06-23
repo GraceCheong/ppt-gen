@@ -45,7 +45,7 @@ export function TemplateSelect() {
 
   return (
     <select
-      className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm outline-none focus:border-blue-400"
+      className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs font-semibold outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all duration-150 cursor-pointer"
       title={TIPS.template.select}
       value={templateId ?? ''}
       onChange={e => {
@@ -61,10 +61,11 @@ export function TemplateSelect() {
         const isDefault = id === defaultId
         return (
           <option key={name} value={id}>
-            {id}{isDefault ? ' ★' : ''}
+            {id}{isDefault ? ' (기본 템플릿)' : ''}
           </option>
         )
       })}
     </select>
   )
 }
+

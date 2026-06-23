@@ -31,3 +31,13 @@ PPTX_MEDIA_TYPE = (
 TEMPLATE_SYNC_INTERVAL_SECONDS = 10 * 60
 GENERATOR_VERSION = "direct-python-pptx-v4"
 MAX_ERROR_REPORT_TEXT = 12000
+
+# HTTPS 모드 — True이면 쿠키에 secure=True 적용 (Tauri sidecar는 HTTP이므로 기본 False)
+HTTPS_MODE: bool = os.environ.get("PORR_HTTPS", "").lower() in ("1", "true", "yes")
+
+# CORS 허용 오리진 — 쉼표로 구분. 기본값은 Vite dev server
+_cors_env = os.environ.get("PORR_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+CORS_ORIGINS: list[str] = [o.strip() for o in _cors_env.split(",") if o.strip()]
+
+# 파일 업로드 최대 크기 (bytes)
+MAX_UPLOAD_BYTES: int = int(os.environ.get("PORR_MAX_UPLOAD_MB", "50")) * 1024 * 1024

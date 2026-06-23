@@ -5,6 +5,7 @@ import {
   getLyricsSectionStatus,
 } from '../../types/project'
 import type { SongEntry } from '../../types/project'
+import { CheckCircle2, Circle, AlertTriangle } from 'lucide-react'
 
 interface CheckItem {
   ok: boolean
@@ -59,25 +60,34 @@ export function Checklist() {
   const allOk = items.every(i => i.ok)
 
   return (
-    <div>
+    <div className="space-y-2">
       {items.map((item, i) => (
-        <div key={i} className="py-0.5">
-          <div className="flex items-center gap-2">
-            <span className={item.ok ? 'text-green-500' : 'text-gray-300'}>
-              {item.ok ? '✓' : '○'}
-            </span>
-            <span className={`text-xs ${item.ok ? 'text-gray-600' : 'text-gray-400'}`}>
+        <div key={i} className="flex flex-col">
+          <div className="flex items-center gap-2.5">
+            {item.ok ? (
+              <CheckCircle2 className="w-4 h-4 text-success-500 shrink-0" />
+            ) : (
+              <Circle className="w-4 h-4 text-neutral-300 shrink-0" />
+            )}
+            <span className={`text-xs font-medium ${item.ok ? 'text-neutral-700' : 'text-neutral-400'}`}>
               {item.label}
             </span>
           </div>
           {!item.ok && item.detail && (
-            <p className="text-[10px] text-orange-400 ml-5 mt-0.5 leading-snug">{item.detail}</p>
+            <div className="flex items-start gap-1 mt-1 ml-6.5 text-[10px] text-warning-600 bg-warning-50 border border-warning-100 rounded px-2 py-1 leading-snug">
+              <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+              <span>{item.detail}</span>
+            </div>
           )}
         </div>
       ))}
       {allOk && (
-        <p className="text-xs text-green-600 font-medium mt-2">PPT 생성 준비 완료</p>
+        <div className="mt-3.5 bg-success-50 border border-success-100 rounded-lg py-2 px-3 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-success-600 shrink-0" />
+          <p className="text-xs text-success-700 font-semibold">PPT 생성 준비 완료</p>
+        </div>
       )}
     </div>
   )
 }
+

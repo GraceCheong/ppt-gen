@@ -38,7 +38,7 @@ export async function saveHistoryEntry(
 
 export async function updateHistoryEntry(
   weekEndDate: string,
-  payload: { password: string; sequence_entries: ManualEntry[] }
+  payload: { sequence_entries: ManualEntry[] }
 ): Promise<void> {
   await apiFetch(`/api/history/weekly/${weekEndDate}/entries`, {
     method: 'PUT',
@@ -48,10 +48,14 @@ export async function updateHistoryEntry(
 
 export async function updateHistoryRoles(
   weekEndDate: string,
-  payload: { password: string; worship_leader: string; accompanist: string; prayer_person: string }
+  payload: { worship_leader: string; accompanist: string; prayer_person: string }
 ): Promise<void> {
   await apiFetch(`/api/history/weekly/${weekEndDate}/roles`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   })
+}
+
+export async function deleteHistoryEntry(weekEndDate: string): Promise<void> {
+  await apiFetch(`/api/history/weekly/${weekEndDate}`, { method: 'DELETE' })
 }

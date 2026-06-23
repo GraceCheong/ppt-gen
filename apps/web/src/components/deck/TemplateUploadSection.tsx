@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { uploadTemplate, type UploadResult } from '../../api/templates'
 import { useProjectStore } from '../../store/projectStore'
 import { TIPS } from '../../constants/tooltips'
+import { Upload, AlertTriangle, XCircle, CheckCircle2, ChevronDown } from 'lucide-react'
 
 const ISSUE_LABELS: Record<string, string> = {
   lyrics_layout_missing: '"가사" 레이아웃 없음 — 슬라이드 마스터에 이름이 "가사"인 레이아웃이 필요합니다.',
@@ -18,74 +19,81 @@ const WARNING_LABELS: Record<string, string> = {
 
 function IncompatiblePanel({ result }: { result: UploadResult }) {
   return (
-    <div className="mt-2 text-xs border border-orange-200 bg-orange-50 rounded-lg p-3 space-y-2">
-      <p className="font-semibold text-orange-700">호환되지 않는 템플릿</p>
+    <div className="mt-2.5 text-xs border border-danger-200 bg-danger-50/50 rounded-xl p-3.5 space-y-3.5">
+      <div className="flex items-center gap-1.5 text-danger-700 font-bold">
+        <XCircle className="w-4 h-4 text-danger-500" />
+        <span>호환되지 않는 템플릿</span>
+      </div>
 
-      <div>
-        <p className="text-orange-600 font-medium mb-1">필수 조건 미충족:</p>
-        <ul className="space-y-1">
+      <div className="space-y-1.5">
+        <p className="text-danger-700 font-semibold">필수 조건 미충족:</p>
+        <ul className="space-y-1 pl-1">
           {(result.issues ?? []).map(issue => (
-            <li key={issue} className="text-orange-800">✕ {ISSUE_LABELS[issue] ?? issue}</li>
+            <li key={issue} className="text-danger-800 flex items-start gap-1">
+              <span className="text-danger-500 shrink-0">✕</span>
+              <span>{ISSUE_LABELS[issue] ?? issue}</span>
+            </li>
           ))}
         </ul>
       </div>
 
-      <details className="pt-1">
-        <summary className="cursor-pointer font-medium text-orange-700 select-none">
-          템플릿 구성 방법 보기 ▾
+      <details className="group pt-2 border-t border-danger-200/50">
+        <summary className="cursor-pointer font-semibold text-danger-700 select-none flex items-center justify-between">
+          <span>템플릿 구성 방법 보기</span>
+          <ChevronDown className="w-3.5 h-3.5 transition-transform duration-200 group-open:rotate-180" />
         </summary>
-        <div className="mt-2 space-y-3 text-gray-700">
+        <div className="mt-3 space-y-3 text-neutral-600 leading-relaxed">
           <div>
-            <p className="font-medium mb-1">PowerPoint 슬라이드 마스터에 다음 레이아웃을 추가하세요:</p>
-            <p className="text-gray-500 mb-2">보기 → 슬라이드 마스터 → 레이아웃 삽입 후 이름 변경</p>
-            <table className="w-full border-collapse text-xs">
+            <p className="font-semibold mb-1">PowerPoint 슬라이드 마스터에 다음 레이아웃을 추가하세요:</p>
+            <p className="text-[11px] text-neutral-400 mb-2.5">보기 → 슬라이드 마스터 → 레이아웃 삽입 후 이름 변경</p>
+            <table className="w-full border-collapse text-xs border border-neutral-200 rounded-lg overflow-hidden">
               <thead>
-                <tr className="bg-orange-100 text-orange-800">
-                  <th className="text-left p-1.5 border border-orange-200">레이아웃 이름</th>
-                  <th className="text-left p-1.5 border border-orange-200">필수</th>
-                  <th className="text-left p-1.5 border border-orange-200">placeholder 구성</th>
+                <tr className="bg-neutral-50 text-neutral-700 border-b border-neutral-200">
+                  <th className="text-left p-2 font-bold">레이아웃 이름</th>
+                  <th className="text-left p-2 font-bold">필수 여부</th>
+                  <th className="text-left p-2 font-bold">placeholder 구성</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-orange-100">
+              <tbody className="divide-y divide-neutral-200">
                 <tr>
-                  <td className="p-1.5 border border-orange-200 font-mono font-semibold">가사</td>
-                  <td className="p-1.5 border border-orange-200 text-red-600">필수</td>
-                  <td className="p-1.5 border border-orange-200">
-                    텍스트 박스 2개 — <strong>큰 것: 가사 내용</strong>, <strong>작은 것: 곡 제목</strong>
+                  <td className="p-2 font-mono font-bold text-neutral-800">가사</td>
+                  <td className="p-2 text-danger-600 font-semibold">필수</td>
+                  <td className="p-2 text-neutral-500">
+                    텍스트 박스 2개 — <strong className="text-neutral-700 font-semibold">큰 것: 가사 내용</strong>, <strong className="text-neutral-700 font-semibold">작은 것: 곡 제목</strong>
                   </td>
                 </tr>
                 <tr>
-                  <td className="p-1.5 border border-orange-200 font-mono font-semibold">제목</td>
-                  <td className="p-1.5 border border-orange-200 text-red-600">필수</td>
-                  <td className="p-1.5 border border-orange-200">
+                  <td className="p-2 font-mono font-bold text-neutral-800">제목</td>
+                  <td className="p-2 text-danger-600 font-semibold">필수</td>
+                  <td className="p-2 text-neutral-500 font-medium">
                     텍스트 박스 1개 이상 — 곡 제목 표시용
                   </td>
                 </tr>
                 <tr>
-                  <td className="p-1.5 border border-orange-200 font-mono font-semibold">홈</td>
-                  <td className="p-1.5 border border-orange-200 text-yellow-600">권장</td>
-                  <td className="p-1.5 border border-orange-200">
+                  <td className="p-2 font-mono font-bold text-neutral-800">홈</td>
+                  <td className="p-2 text-warning-600 font-semibold">권장</td>
+                  <td className="p-2 text-neutral-500 font-medium">
                     빈 슬라이드 — 시작/마무리/빈 화면용
                   </td>
                 </tr>
                 <tr>
-                  <td className="p-1.5 border border-orange-200 font-mono font-semibold">예배를 시작하며</td>
-                  <td className="p-1.5 border border-orange-200 text-yellow-600">권장</td>
-                  <td className="p-1.5 border border-orange-200">예배 오프닝 슬라이드</td>
+                  <td className="p-2 font-mono font-bold text-neutral-800">예배를 시작하며</td>
+                  <td className="p-2 text-warning-600 font-semibold">권장</td>
+                  <td className="p-2 text-neutral-500 font-medium">예배 오프닝 슬라이드</td>
                 </tr>
                 <tr>
-                  <td className="p-1.5 border border-orange-200 font-mono font-semibold">기도</td>
-                  <td className="p-1.5 border border-orange-200 text-yellow-600">권장</td>
-                  <td className="p-1.5 border border-orange-200">마무리 기도 슬라이드</td>
+                  <td className="p-2 font-mono font-bold text-neutral-800">기도</td>
+                  <td className="p-2 text-warning-600 font-semibold">권장</td>
+                  <td className="p-2 text-neutral-500 font-medium">마무리 기도 슬라이드</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
           {(result.layout_names ?? []).length > 0 && (
-            <div>
-              <p className="font-medium text-gray-600">현재 파일의 레이아웃 목록:</p>
-              <p className="text-gray-500 mt-0.5">{result.layout_names!.join(', ')}</p>
+            <div className="pt-2 border-t border-neutral-100">
+              <p className="font-semibold text-neutral-700">현재 파일의 레이아웃 목록:</p>
+              <p className="text-neutral-500 text-[11px] mt-1 font-mono break-all">{result.layout_names!.join(', ')}</p>
             </div>
           )}
         </div>
@@ -97,11 +105,16 @@ function IncompatiblePanel({ result }: { result: UploadResult }) {
 function WarningPanel({ warnings }: { warnings: string[] }) {
   if (warnings.length === 0) return null
   return (
-    <div className="mt-1 text-xs border border-yellow-200 bg-yellow-50 rounded p-2 space-y-1">
-      <p className="font-medium text-yellow-700">권장 레이아웃 없음 (생성에는 문제 없음)</p>
-      {warnings.map(w => (
-        <p key={w} className="text-yellow-700">⚠ {WARNING_LABELS[w] ?? w}</p>
-      ))}
+    <div className="mt-2 text-[11px] border border-warning-200 bg-warning-50/50 rounded-xl p-3 space-y-1.5">
+      <div className="flex items-center gap-1.5 text-warning-700 font-bold">
+        <AlertTriangle className="w-3.5 h-3.5 text-warning-500" />
+        <span>권장 레이아웃 없음 (생성에는 문제 없음)</span>
+      </div>
+      <div className="space-y-1 pl-1">
+        {warnings.map(w => (
+          <p key={w} className="text-warning-800 font-medium">⚠ {WARNING_LABELS[w] ?? w}</p>
+        ))}
+      </div>
     </div>
   )
 }
@@ -170,16 +183,20 @@ export function TemplateUploadSection() {
         onClick={openPicker}
         disabled={status === 'uploading'}
         title={TIPS.template.upload}
-        className="text-xs text-blue-500 hover:text-blue-700 disabled:text-gray-400 transition-colors"
+        className="text-[11px] font-semibold text-primary-500 hover:text-primary-600 disabled:text-neutral-400 transition-colors flex items-center gap-1.5 cursor-pointer select-none py-1"
       >
-        {status === 'uploading' ? '검증 중...' : '+ 템플릿 업로드'}
+        <Upload className="w-3.5 h-3.5" />
+        <span>{status === 'uploading' ? '검증 중...' : '템플릿 추가 업로드 (.pptx)'}</span>
       </button>
 
       {status === 'success' && (
-        <p className="mt-1 text-xs text-green-600">
-          ✓ &quot;{uploadResult?.template_id}&quot; 업로드 완료
-          {(uploadResult?.warnings?.length ?? 0) > 0 && ' (일부 권장 레이아웃 없음)'}
-        </p>
+        <div className="mt-2 text-xs text-success-700 bg-success-50 border border-success-100 rounded-xl p-2.5 flex items-start gap-1.5">
+          <CheckCircle2 className="w-4 h-4 text-success-500 shrink-0" />
+          <span>
+            &quot;{uploadResult?.template_id}&quot; 업로드 완료
+            {(uploadResult?.warnings?.length ?? 0) > 0 && ' (일부 권장 레이아웃 없음)'}
+          </span>
+        </div>
       )}
 
       {status === 'success' && (uploadResult?.warnings?.length ?? 0) > 0 && (
@@ -187,7 +204,10 @@ export function TemplateUploadSection() {
       )}
 
       {status === 'error' && (
-        <p className="mt-1 text-xs text-red-500">{errorMsg}</p>
+        <div className="mt-2 text-xs text-danger-700 bg-danger-50 border border-danger-100 rounded-xl p-2.5 flex items-start gap-1.5">
+          <XCircle className="w-4 h-4 text-danger-500 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
       )}
 
       {status === 'incompatible' && uploadResult && (
@@ -196,3 +216,4 @@ export function TemplateUploadSection() {
     </div>
   )
 }
+
