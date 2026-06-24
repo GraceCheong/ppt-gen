@@ -12,7 +12,8 @@ interface Props {
 export function DefaultTemplateModal({ onClose }: Props) {
   const queryClient = useQueryClient()
   const { setTemplateId } = useProjectStore()
-  const { data: templates = [] } = useQuery({ queryKey: ['templates'], queryFn: fetchTemplates })
+  const { data: templateItems = [] } = useQuery({ queryKey: ['templates'], queryFn: fetchTemplates })
+  const templates = templateItems.map(t => t.id + '.pptx')
   const { data: currentDefault } = useQuery({
     queryKey: ['template-default'],
     queryFn: fetchDefaultTemplate,

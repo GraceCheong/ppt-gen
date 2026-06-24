@@ -69,10 +69,19 @@ def init_history_db() -> None:
         _migrate_add_church(conn)
         _migrate_create_auth_tables(conn)
         _migrate_create_song_usage_events(conn)
+        _migrate_add_event(conn)
         conn.commit()
 
 
 # ── 마이그레이션 함수들 ──────────────────────────────────────────────────────────
+
+def _migrate_add_event(conn: sqlite3.Connection) -> None:
+    """weekly_repertoire 에 event 컬럼 추가."""
+    try:
+        conn.execute("ALTER TABLE weekly_repertoire ADD COLUMN event TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # 이미 존재
+
 
 def _migrate_add_roles(conn: sqlite3.Connection) -> None:
     """weekly_repertoire 에 담당자 컬럼 추가."""

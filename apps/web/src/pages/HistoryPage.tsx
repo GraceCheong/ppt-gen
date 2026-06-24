@@ -249,7 +249,7 @@ function WeekCard({
   onEdit: () => void
   onDelete: () => void
 }) {
-  const hasRoles = item.worship_leader || item.accompanist || item.prayer_person
+  const hasRoles = item.worship_leader || item.accompanist || item.prayer_person || item.event
 
   return (
     <div className="border border-neutral-200/80 rounded-2xl bg-white overflow-hidden shadow-sm hover:shadow-md transition-all duration-200">
@@ -286,17 +286,25 @@ function WeekCard({
       </div>
 
       {hasRoles && (
-        <div className="px-5 py-3 bg-primary-50/20 border-b border-neutral-100/50 grid grid-cols-3 gap-4 text-xs select-none">
-          {[
-            { label: '인도자', val: item.worship_leader, bold: true },
-            { label: '반주자', val: item.accompanist,   bold: false },
-            { label: '기도자', val: item.prayer_person,  bold: false },
-          ].map(({ label, val, bold }) => val ? (
-            <div key={label} className="min-w-0">
-              <p className="text-[9px] text-neutral-400 font-bold uppercase">{label}</p>
-              <p className={`text-xs ${bold ? 'font-bold text-primary-700' : 'font-semibold text-neutral-700'} truncate mt-0.5`}>{val}</p>
+        <div className="px-5 py-3 bg-primary-50/20 border-b border-neutral-100/50 flex flex-col gap-2 text-xs select-none">
+          {item.event && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-bold text-amber-500 uppercase shrink-0">이벤트</span>
+              <span className="text-xs font-bold text-amber-700 truncate">{item.event}</span>
             </div>
-          ) : null)}
+          )}
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { label: '인도자', val: item.worship_leader, bold: true },
+              { label: '반주자', val: item.accompanist,   bold: false },
+              { label: '기도자', val: item.prayer_person,  bold: false },
+            ].map(({ label, val, bold }) => val ? (
+              <div key={label} className="min-w-0">
+                <p className="text-[9px] text-neutral-400 font-bold uppercase">{label}</p>
+                <p className={`text-xs ${bold ? 'font-bold text-primary-700' : 'font-semibold text-neutral-700'} truncate mt-0.5`}>{val}</p>
+              </div>
+            ) : null)}
+          </div>
         </div>
       )}
 
@@ -400,7 +408,7 @@ export function HistoryPage() {
             className="shrink-0 text-xs font-bold bg-primary-600 text-white hover:bg-primary-700 rounded-xl px-4 py-2 cursor-pointer shadow-sm shadow-primary-600/5 hover:shadow-md hover:shadow-primary-600/10 transition-all flex items-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>이력 추가</span>
+            <span className="hidden sm:inline">이력 추가</span>
           </button>
 
           {viewMode === 'list' && (
@@ -409,7 +417,8 @@ export function HistoryPage() {
               title={sortOrder === 'desc' ? TIPS.history.sortDesc : TIPS.history.sortAsc}
               className="shrink-0 text-xs font-semibold text-neutral-700 border border-neutral-200 hover:border-neutral-300 rounded-xl px-3 py-2 hover:bg-neutral-50 transition-colors text-center cursor-pointer bg-white"
             >
-              {sortOrder === 'desc' ? '최신 순 ↓' : '과거 순 ↑'}
+              <span className="hidden sm:inline">{sortOrder === 'desc' ? '최신 순 ↓' : '과거 순 ↑'}</span>
+              <span className="sm:hidden">{sortOrder === 'desc' ? '↓' : '↑'}</span>
             </button>
           )}
 
@@ -423,7 +432,7 @@ export function HistoryPage() {
                   ${viewMode === v ? 'bg-neutral-900 text-white' : 'bg-transparent text-neutral-500 hover:text-neutral-800'}`}
               >
                 {v === 'calendar' ? <CalendarIcon className="w-3 h-3" /> : <List className="w-3 h-3" />}
-                <span>{v === 'calendar' ? '달력' : '목록'}</span>
+                <span className="hidden sm:inline">{v === 'calendar' ? '달력' : '목록'}</span>
               </button>
             ))}
           </div>

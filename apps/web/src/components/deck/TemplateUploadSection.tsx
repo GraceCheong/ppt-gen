@@ -4,6 +4,7 @@ import { uploadTemplate, type UploadResult } from '../../api/templates'
 import { useProjectStore } from '../../store/projectStore'
 import { TIPS } from '../../constants/tooltips'
 import { Upload, AlertTriangle, XCircle, CheckCircle2, ChevronDown } from 'lucide-react'
+import { TemplateUploadGuideModal } from './TemplateUploadGuideModal'
 
 const ISSUE_LABELS: Record<string, string> = {
   lyrics_layout_missing: '"가사" 레이아웃 없음 — 슬라이드 마스터에 이름이 "가사"인 레이아웃이 필요합니다.',
@@ -126,6 +127,7 @@ export function TemplateUploadSection() {
   const [status, setStatus] = useState<Status>('idle')
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [showGuide, setShowGuide] = useState(false)
   const queryClient = useQueryClient()
   const { setTemplateId } = useProjectStore()
 
@@ -167,6 +169,16 @@ export function TemplateUploadSection() {
 
   return (
     <div>
+      {showGuide && (
+        <TemplateUploadGuideModal
+          onClose={() => setShowGuide(false)}
+          onConfirm={() => {
+            setShowGuide(false)
+            openPicker()
+          }}
+        />
+      )}
+
       <input
         ref={fileInputRef}
         type="file"
@@ -180,7 +192,7 @@ export function TemplateUploadSection() {
       />
 
       <button
-        onClick={openPicker}
+        onClick={() => setShowGuide(true)}
         disabled={status === 'uploading'}
         title={TIPS.template.upload}
         className="text-[11px] font-semibold text-primary-500 hover:text-primary-600 disabled:text-neutral-400 transition-colors flex items-center gap-1.5 cursor-pointer select-none py-1"

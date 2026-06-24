@@ -31,7 +31,7 @@ export function LoginForm({ onSwitchToSignup }: LoginFormProps) {
         <div className="flex flex-col items-center mb-8">
           <img src="/atempo.ico" className="w-12 h-12 object-contain rounded-xl mb-2.5 shadow-sm" alt="Logo" />
           <h1 className="text-2xl font-bold text-neutral-900 tracking-tight">PO,RR</h1>
-          <p className="text-xs text-neutral-400 mt-1">교회 예배 PPT 자동 생성 플랫폼</p>
+          <p className="text-xs text-neutral-400 mt-1">예배 PPT 자동 생성 플랫폼</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -86,15 +86,19 @@ export function LoginForm({ onSwitchToSignup }: LoginFormProps) {
             onClick={onSwitchToSignup}
             className="w-full border border-neutral-200 text-neutral-700 rounded-lg py-2 text-sm font-medium hover:bg-neutral-50 focus:bg-neutral-50 active:bg-neutral-100 transition-all duration-200 cursor-pointer"
           >
-            새 교회 계정 만들기
+            회원가입하기
           </button>
           <button
             onClick={enterGuestMode}
-            className="w-full text-neutral-400 hover:text-neutral-600 text-xs font-medium py-1 transition-all duration-200 cursor-pointer hover:underline"
+            className="w-full border border-neutral-200 text-neutral-700 rounded-lg py-2 text-sm font-medium hover:bg-neutral-50 focus:bg-neutral-50 active:bg-neutral-100 transition-all duration-200 cursor-pointer"
           >
             로그인 없이 Guest Mode로 시작
           </button>
         </div>
+
+        <p className="text-center text-[10px] text-neutral-400 mt-5">
+          로그인 없이 Guest Mode 를 사용하면 교회 데이터와 연동이 불가합니다.
+        </p>
       </div>
     </div>
   )

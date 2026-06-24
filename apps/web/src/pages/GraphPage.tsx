@@ -66,7 +66,7 @@ function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphEdge[] 
   const graphRef = useRef<any>(null)
   const fitDone = useRef(false)
 
-  const [dim, setDim] = useState({ w: 800, h: 500 })
+  const [dim, setDim] = useState<{ w: number; h: number } | null>(null)
   const [hovered, setHovered] = useState<GraphNode | null>(null)
   const [selected, setSelected] = useState<GraphNode | null>(null)
 
@@ -76,11 +76,20 @@ function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphEdge[] 
     const el = containerRef.current
     if (!el) return
     const obs = new ResizeObserver(([entry]) => {
-      setDim({ w: entry.contentRect.width, h: Math.max(400, entry.contentRect.height) })
+      const w = entry.contentRect.width
+      const h = entry.contentRect.height
+      if (w > 0) setDim({ w, h: Math.max(400, h) })
     })
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
+
+  // dim이 바뀔 때(탭 복귀 포함) 그래프를 뷰포트에 맞춤
+  useEffect(() => {
+    if (!dim || !graphRef.current) return
+    fitDone.current = false
+    graphRef.current.zoomToFit(400, 80)
+  }, [dim])
 
   useEffect(() => {
     const g = graphRef.current
@@ -89,15 +98,18 @@ function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphEdge[] 
     g.d3Force('link')?.distance((link: any) => {
       const sw = typeof link.source === 'object' ? (link.source as GraphNode).weight : 0
       const tw = typeof link.target === 'object' ? (link.target as GraphNode).weight : 0
-      return (nodeR(sw) + nodeR(tw)) * 3
+      return (nodeR(sw) + nodeR(tw)) * 12
     })
+    // 노드 원 + 레이블(10px, ~7px/char) 영역까지 충돌 처리
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     g.d3Force('collision', forceCollide((node: any) => {
       const n = node as GraphNode
-      const labelHalfW = Math.min(n.id.length, 15) * 8 / 2
-      return Math.max(nodeR(n.weight) + 8, labelHalfW + 6)
+      const labelLen = Math.min(n.id.length, 15)
+      const labelHalfW = labelLen * 7        // 10px 폰트 기준 ~7px/char
+      const labelBottom = nodeR(n.weight) + 24  // r + gap + 글자 높이 + 여백
+      return Math.max(labelBottom, labelHalfW) + 12  // 추가 여유
     }))
-    g.d3Force('charge')?.strength(-200)
+    g.d3Force('charge')?.strength(-300)
     fitDone.current = false
     g.d3ReheatSimulation()
   }, [nodes, links])
@@ -128,7 +140,7 @@ function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphEdge[] 
   }, [selected, links])
 
   function nodeR(weight: number) {
-    return Math.max(10, Math.min(28, 10 + weight * 2.5))
+    return Math.max(5, Math.min(15, 5 + weight * 1.5))
   }
 
   function paintNode(raw: object, ctx: CanvasRenderingContext2D) {
@@ -172,7 +184,7 @@ function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphEdge[] 
 
   return (
     <div ref={containerRef} className="relative flex-1 min-h-0 overflow-hidden bg-neutral-50/10">
-      <ForceGraph2D
+      {dim && <ForceGraph2D
         ref={graphRef}
         width={dim.w}
         height={dim.h}
@@ -216,7 +228,7 @@ function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphEdge[] 
             const dimmed = neighborIds !== null && !neighborIds.has(n.id)
             const isSel = selected?.id === n.id
             const isHov = hovered?.id === node.id
-            ctx.font = `${isSel || isHov ? 'bold ' : ''}9px sans-serif`
+            ctx.font = `${isSel || isHov ? 'bold ' : ''}7px sans-serif`
             ctx.fillStyle = dimmed ? 'rgba(180,180,200,0.4)' : '#3f3f46'
             ctx.textAlign = 'center'
             ctx.textBaseline = 'top'
@@ -225,7 +237,7 @@ function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphEdge[] 
           }
           ctx.textBaseline = 'alphabetic'
         }}
-      />
+      />}
 
       {/* 색상 범례 */}
       {nodes.length > 1 && minW !== maxW && (
@@ -302,10 +314,11 @@ function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphEdge[] 
 export function GraphPage() {
   const [minEdge, setMinEdge] = useState(1)
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isFetching, isError } = useQuery({
     queryKey: ['graph'],
     queryFn: fetchGraph,
-    staleTime: 60_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: false,
   })
 
   const { nodes, links } = useMemo(
@@ -319,7 +332,7 @@ export function GraphPage() {
         <div>
           <div className="flex items-center gap-1.5 text-sm font-bold text-neutral-800">
             <GitFork className="w-4 h-4 text-primary-500" />
-            <span>찬양 예배 관계도</span>
+            <span>찬양 콘티 그래프</span>
           </div>
           <p className="text-[10px] text-neutral-400 mt-0.5">
             같은 셋리스트에 동시 편성된 횟수가 많을수록 긴밀하게 연결됩니다. 드래그나 휠 스크롤로 관계도를 탐색하세요.
@@ -344,25 +357,26 @@ export function GraphPage() {
       </div>
 
       <div className="flex-1 flex flex-col min-h-0">
-        {isLoading && (
+        {/* 로딩: 최초 로드 or 재페치 중인데 보여줄 노드가 없을 때 */}
+        {(isLoading || (isFetching && nodes.length === 0)) && (
           <div className="flex-1 flex flex-col items-center justify-center text-xs text-neutral-400 gap-2">
             <Loader2 className="w-5 h-5 text-primary-500 animate-spin" />
             <span>불러오는 중...</span>
           </div>
         )}
-        {isError && (
+        {!isLoading && !isFetching && isError && (
           <div className="m-5 text-xs text-danger-700 bg-danger-50 border border-danger-100 rounded-xl p-4 flex items-start gap-2.5 font-medium leading-normal">
             <AlertCircle className="w-4 h-4 text-danger-500 shrink-0 mt-0.5" />
             <span>그래프 데이터를 불러올 수 없습니다. 인터넷이나 서버 상태를 확인해 주세요.</span>
           </div>
         )}
-        {!isLoading && !isError && (data?.nodes.length ?? 0) === 0 && (
+        {!isLoading && !isFetching && !isError && (data?.nodes.length ?? 0) === 0 && (
           <div className="flex-1 flex flex-col items-center justify-center text-xs text-neutral-400 gap-2">
             <AlertCircle className="w-5 h-5 text-neutral-300 animate-pulse" />
             <span>분석할 예배 이력이 없습니다. 먼저 캘린더나 이력 탭에서 데이터를 기록하세요.</span>
           </div>
         )}
-        {!isLoading && nodes.length === 0 && (data?.nodes.length ?? 0) > 0 && (
+        {!isLoading && !isFetching && nodes.length === 0 && (data?.nodes.length ?? 0) > 0 && (
           <div className="flex-1 flex flex-col items-center justify-center text-xs text-neutral-400 gap-2">
             <AlertCircle className="w-5 h-5 text-neutral-300 animate-pulse" />
             <span>최소 공동 수록 횟수가 {minEdge}회 이상 연결된 찬양 조합이 없습니다. 설정값을 조절해 보세요.</span>

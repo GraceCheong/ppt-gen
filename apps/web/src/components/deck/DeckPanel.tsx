@@ -5,7 +5,7 @@ import { useAuthStore } from '../../store/authStore'
 import { TemplateSelect } from './TemplateSelect'
 import { TemplatePreview } from './TemplatePreview'
 import { TemplateUploadSection } from './TemplateUploadSection'
-import { DefaultTemplateModal } from './DefaultTemplateModal'
+import { TemplateManageModal } from './TemplateManageModal'
 import { Checklist } from './Checklist'
 import { JobProgressDialog } from './JobProgressDialog'
 import { createPptxJob, createSonglistJob } from '../../api/exports'
@@ -34,7 +34,7 @@ export function DeckPanel() {
   useEffect(() => { setLinesStr(String(settings.maxLinesPerSlide)) }, [settings.maxLinesPerSlide])
   useEffect(() => { setCharsStr(String(settings.maxCharsPerLine)) }, [settings.maxCharsPerLine])
 
-  const [showDefaultModal, setShowDefaultModal] = useState(false)
+  const [showManageModal, setShowManageModal] = useState(false)
   const [pptJobId, setPptJobId] = useState<string | null>(null)
   const [songlistJobId, setSonglistJobId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -77,12 +77,12 @@ export function DeckPanel() {
             <span>디자인 템플릿</span>
           </div>
           <button
-            onClick={() => setShowDefaultModal(true)}
+            onClick={() => setShowManageModal(true)}
             className="text-[11px] font-medium text-neutral-400 hover:text-neutral-700 flex items-center gap-1 transition-colors cursor-pointer"
-            title={TIPS.template.defaultOpen}
+            title="템플릿 추가·삭제 및 기본값 설정"
           >
             <Settings className="w-3 h-3" />
-            <span>기본 설정</span>
+            <span>템플릿 관리</span>
           </button>
         </div>
         <div className="border border-neutral-100 rounded-xl overflow-hidden shadow-sm">
@@ -198,8 +198,8 @@ export function DeckPanel() {
         </p>
       </section>
 
-      {showDefaultModal && (
-        <DefaultTemplateModal onClose={() => setShowDefaultModal(false)} />
+      {showManageModal && (
+        <TemplateManageModal onClose={() => setShowManageModal(false)} />
       )}
 
       {pptJobId && (

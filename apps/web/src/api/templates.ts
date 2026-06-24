@@ -1,8 +1,13 @@
 import { apiFetch } from './client'
 import { getServerUrl } from './serverConfig'
 
-export async function fetchTemplates(): Promise<string[]> {
-  const data = await apiFetch<{ templates: string[] }>('/api/templates')
+export interface TemplateItem {
+  id: string
+  deletable: boolean
+}
+
+export async function fetchTemplates(): Promise<TemplateItem[]> {
+  const data = await apiFetch<{ templates: TemplateItem[] }>('/api/templates')
   return data.templates
 }
 
@@ -26,6 +31,10 @@ export async function saveDefaultTemplate(templateId: string | null): Promise<vo
   })
 }
 
+export async function deleteTemplate(templateId: string): Promise<void> {
+  await apiFetch(`/api/templates/${encodeURIComponent(templateId)}`, { method: 'DELETE' })
+}
+
 export async function uploadTemplate(file: File): Promise<UploadResult> {
   const base = await getServerUrl()
   const formData = new FormData()
@@ -33,6 +42,7 @@ export async function uploadTemplate(file: File): Promise<UploadResult> {
 
   const res = await fetch(`${base}/api/templates/upload`, {
     method: 'POST',
+    credentials: 'include',
     body: formData,
   })
 

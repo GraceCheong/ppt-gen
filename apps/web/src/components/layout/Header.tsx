@@ -3,7 +3,8 @@ import { useServerStatus } from '../../hooks/useServerStatus'
 import { isTauri } from '../../api/serverConfig'
 import { TIPS } from '../../constants/tooltips'
 import { useAuthStore } from '../../store/authStore'
-import { Presentation, Calendar, TrendingUp, LogOut, RefreshCw } from 'lucide-react'
+import { Presentation, Calendar, TrendingUp, LogOut, RefreshCw, UserCircle, Building2, User } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
 
 const MODE_LABEL: Record<string, string> = {
   browser: '',
@@ -30,6 +31,8 @@ export function Header() {
   const { resolution, reconnect } = useServerStatus()
   const { mode, user, logout } = useAuthStore()
   const navigate = useNavigate()
+  const [profileOpen, setProfileOpen] = useState(false)
+  const profileRef = useRef<HTMLDivElement>(null)
 
   const showStatus = isTauri()
   const connecting = showStatus && resolution === null
@@ -41,8 +44,19 @@ export function Header() {
 
   async function handleLogout() {
     await logout()
+    setProfileOpen(false)
     navigate('/app')
   }
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setProfileOpen(false)
+      }
+    }
+    if (profileOpen) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [profileOpen])
 
   return (
     <header className="h-14 flex items-center px-5 bg-white border-b border-neutral-200 shrink-0 gap-4 justify-between">
@@ -57,36 +71,70 @@ export function Header() {
         <nav className="flex items-center gap-1">
           <NavLink to="/app" className={tabClass}>
             <Presentation className="w-3.5 h-3.5" />
-            <span>PPT 만들기</span>
+            <span className="hidden sm:inline">PPT 만들기</span>
           </NavLink>
           {/* Guest에게는 캘린더 탭 숨김 */}
           {mode === 'user' && (
             <NavLink to="/history" className={tabClass}>
               <Calendar className="w-3.5 h-3.5" />
-              <span>캘린더</span>
+              <span className="hidden sm:inline">캘린더</span>
             </NavLink>
           )}
           <NavLink to="/graph" className={tabClass}>
             <TrendingUp className="w-3.5 h-3.5" />
-            <span>워십 그래프</span>
+            <span className="hidden sm:inline">워십 그래프</span>
           </NavLink>
         </nav>
       </div>
 
       <div className="flex items-center gap-3 shrink-0">
+        {/* 게스트 모드: 로그인 유도 아이콘 */}
+        {mode === 'guest' && (
+          <button
+            onClick={() => logout()}
+            title="로그인하기"
+            className="w-8 h-8 flex items-center justify-center rounded-full border border-neutral-200 bg-neutral-100 text-neutral-400 hover:bg-neutral-200 hover:text-neutral-600 transition-all cursor-pointer"
+          >
+            <UserCircle className="w-5 h-5" />
+          </button>
+        )}
+
         {/* 로그인 사용자 표시 */}
         {mode === 'user' && user && (
-          <div className="flex items-center gap-2.5">
-            <div className="bg-neutral-100 text-neutral-700 rounded-full px-3 py-1 text-[11px] font-semibold border border-neutral-200/50">
-              {user.church} · {user.nickname}
-            </div>
+          <div className="relative" ref={profileRef}>
             <button
-              onClick={handleLogout}
-              className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-danger-600 transition-colors font-medium border border-neutral-200 hover:border-danger-200 rounded-lg px-2.5 py-1 bg-white hover:bg-danger-50 shadow-sm cursor-pointer"
+              onClick={() => setProfileOpen(o => !o)}
+              className={`w-8 h-8 flex items-center justify-center rounded-full border transition-all cursor-pointer
+                ${profileOpen
+                  ? 'bg-primary-50 border-primary-300 text-primary-600'
+                  : 'bg-neutral-100 border-neutral-200 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-700'}`}
             >
-              <LogOut className="w-3 h-3" />
-              <span>로그아웃</span>
+              <UserCircle className="w-5 h-5" />
             </button>
+
+            {profileOpen && (
+              <div className="absolute right-0 top-10 w-52 bg-white border border-neutral-200 rounded-2xl shadow-xl z-50 overflow-hidden">
+                <div className="px-4 py-3.5 border-b border-neutral-100 bg-neutral-50/50">
+                  <div className="flex items-center gap-2 text-[11px] text-neutral-500 font-medium mb-1">
+                    <Building2 className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{user.church}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-neutral-800 font-bold">
+                    <User className="w-3 h-3 shrink-0 text-neutral-400" />
+                    <span className="truncate">{user.nickname}</span>
+                  </div>
+                </div>
+                <div className="p-1.5">
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-danger-600 hover:bg-danger-50 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>로그아웃</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

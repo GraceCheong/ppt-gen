@@ -78,9 +78,10 @@ export function SignupForm({ onSwitchToLogin }: SignupFormProps) {
               autoFocus
               value={church}
               onChange={e => setChurch(e.target.value)}
-              placeholder="예: 서울중앙교회"
+              placeholder="예: 서울중앙"
               className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-sm outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all duration-200 placeholder:text-neutral-400"
             />
+            <p className="text-[10px] text-neutral-400 mt-1.5">'교회'를 제외한 교회명만 입력해 주세요.</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-neutral-600 mb-1.5">닉네임 *</label>

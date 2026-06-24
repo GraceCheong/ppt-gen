@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 
@@ -399,8 +400,9 @@ async def api_export_pptx(
         raise HTTPException(400, detail="lyrics_font_size는 숫자여야 합니다.")
 
     template_id = str(data.get("template_id") or "").strip() or None
+    _scope = f"church_{re.sub(r'[^\\w가-힣\\-]', '_', auth.church)}" if auth.mode == "user" and auth.church else "guest"
     try:
-        template_path = resolve_template_path(template_id)
+        template_path = resolve_template_path(template_id, scope=_scope)
     except FileNotFoundError as e:
         raise HTTPException(400, detail=str(e))
 

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { updateHistoryRoles, type WeeklyHistoryItem } from '../../api/history'
 import { TIPS } from '../../constants/tooltips'
-import { ChevronLeft, ChevronRight, X, User, Music, BookOpen, Edit, Plus, FolderOpen, AlertCircle } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X, User, Music, BookOpen, Edit, Plus, FolderOpen, AlertCircle, Star } from 'lucide-react'
 
 // ── 날짜 유틸 ─────────────────────────────────────────────────────────────────
 
@@ -64,13 +64,14 @@ function RolesEditModal({
   const [worshipLeader, setWorshipLeader] = useState(existing?.worship_leader ?? '')
   const [accompanist, setAccompanist] = useState(existing?.accompanist ?? '')
   const [prayerPerson, setPrayerPerson] = useState(existing?.prayer_person ?? '')
+  const [event, setEvent] = useState(existing?.event ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function handleSave() {
     setSaving(true); setError(null)
     try {
-      await updateHistoryRoles(weekEndDate, { worship_leader: worshipLeader, accompanist, prayer_person: prayerPerson })
+      await updateHistoryRoles(weekEndDate, { worship_leader: worshipLeader, accompanist, prayer_person: prayerPerson, event })
       onSaved(); onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : '저장 실패')
@@ -86,19 +87,28 @@ function RolesEditModal({
             <h2 className="text-sm font-bold text-neutral-900 font-sans">담당 예배 팀원 구성</h2>
             <p className="text-[11px] text-neutral-400 mt-0.5">{formatWeekLabel(weekEndDate)}</p>
           </div>
-          <button 
-            onClick={onClose} 
-            title={TIPS.calendar.rolesClose} 
+          <button
+            onClick={onClose}
+            title={TIPS.calendar.rolesClose}
             className="text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50 rounded-lg p-1.5 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="px-6 py-4 space-y-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11px] font-bold text-neutral-500 flex items-center gap-1.5">
+              <Star className="w-3.5 h-3.5 text-amber-400" />
+              <span>이벤트</span>
+            </label>
+            <input type="text" value={event} onChange={e => setEvent(e.target.value)}
+              className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all placeholder:text-neutral-400 text-neutral-800"
+              placeholder="예: 여름 수련회, 안교 순서" />
+          </div>
           {[
             { label: '찬양 인도자 (Leader)', val: worshipLeader, set: setWorshipLeader, icon: <User className="w-3.5 h-3.5 text-neutral-400" /> },
             { label: '메인 반주자 (Keyboard)', val: accompanist, set: setAccompanist, icon: <Music className="w-3.5 h-3.5 text-neutral-400" /> },
-            { label: '예배 대표 기도자 (Prayer)', val: prayerPerson, set: setPrayerPerson, icon: <BookOpen className="w-3.5 h-3.5 text-neutral-400" /> },
+            { label: '예배 준비 & 기도자 (Prayer)', val: prayerPerson, set: setPrayerPerson, icon: <BookOpen className="w-3.5 h-3.5 text-neutral-400" /> },
           ].map(({ label, val, set, icon }) => (
             <div key={label} className="flex flex-col gap-1.5">
               <label className="text-[11px] font-bold text-neutral-500 flex items-center gap-1.5">
@@ -136,7 +146,7 @@ function DetailPanel({
   onEditEntries: () => void
 }) {
   const label = formatWeekLabel(dateStr)
-  const hasRoles = item && (item.worship_leader || item.accompanist || item.prayer_person)
+  const hasRoles = item && (item.worship_leader || item.accompanist || item.prayer_person || item.event)
 
   return (
     <div className="flex flex-col h-full bg-white select-none">
@@ -163,6 +173,17 @@ function DetailPanel({
               
               {hasRoles ? (
                 <div className="space-y-2">
+                  {item.event && (
+                    <div className="flex items-center gap-2.5 bg-amber-50/60 border border-amber-200/50 rounded-xl p-2.5">
+                      <div className="w-6 h-6 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                        <Star className="w-3.5 h-3.5 text-amber-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-amber-500 font-bold">이벤트</p>
+                        <p className="text-xs font-bold text-neutral-800 truncate">{item.event}</p>
+                      </div>
+                    </div>
+                  )}
                   {item.worship_leader && (
                     <div className="flex items-center gap-2.5 bg-neutral-50/50 border border-neutral-200/40 rounded-xl p-2.5">
                       <div className="w-6 h-6 rounded-lg bg-primary-50 flex items-center justify-center shrink-0">
@@ -191,7 +212,7 @@ function DetailPanel({
                         <BookOpen className="w-3.5 h-3.5 text-neutral-500" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-[9px] text-neutral-400 font-bold">기도자</p>
+                        <p className="text-[9px] text-neutral-400 font-bold">예배준비&기도자</p>
                         <p className="text-xs font-semibold text-neutral-700 truncate">{item.prayer_person}</p>
                       </div>
                     </div>
@@ -351,7 +372,7 @@ export function CalendarView({ history, onLoad, onEditEntries }: Props) {
         </div>
 
         {/* 요일 헤더 */}
-        <div className="grid grid-cols-7 border-b border-neutral-100 shrink-0 bg-neutral-50/20 divide-x divide-neutral-100/30">
+        <div className="grid border-b border-neutral-100 shrink-0 bg-neutral-50/20 divide-x divide-neutral-100/30 grid-cols-[repeat(6,1fr)_2fr] md:grid-cols-7">
           {DOW.map((d, i) => (
             <div key={d} className={`py-2 text-center text-[10px] font-bold select-none uppercase tracking-wider
               ${i === 0 ? 'text-danger-500' : i === 6 ? 'text-primary-500' : 'text-neutral-400'}`}>
@@ -362,7 +383,7 @@ export function CalendarView({ history, onLoad, onEditEntries }: Props) {
 
         {/* 날짜 격자 */}
         <div className="flex-1 overflow-y-auto bg-neutral-50/10">
-          <div className="grid grid-cols-7 h-full divide-y divide-x divide-neutral-100/50" style={{ gridAutoRows: 'minmax(84px, 1fr)' }}>
+          <div className="grid h-full divide-y divide-x divide-neutral-100/50 grid-cols-[repeat(6,1fr)_2fr] md:grid-cols-7" style={{ gridAutoRows: 'minmax(84px, 1fr)' }}>
             {days.map((date, i) => {
               if (!date) return <div key={`e-${i}`} className="border-b border-r border-neutral-100/30 bg-neutral-50/30" />
               const dow = date.getDay()
@@ -397,19 +418,27 @@ export function CalendarView({ history, onLoad, onEditEntries }: Props) {
                     {date.getDate()}
                   </span>
 
-                  {/* 토요일: 인도자 이름 미리보기 */}
-                  {isSat && item?.worship_leader && (
+                  {/* 토요일: 이벤트/인도자 이름 미리보기 */}
+                  {isSat && item?.event && (
                     <span className={`text-[10px] font-bold truncate leading-tight rounded-md px-1.5 py-0.5 border select-none w-full text-center mt-2
-                      ${isSelected 
-                        ? 'text-primary-700 bg-primary-100/50 border-primary-200/30' 
+                      ${isSelected
+                        ? 'text-amber-700 bg-amber-100/60 border-amber-300/40'
+                        : 'text-amber-600 bg-amber-50/80 border-amber-200/50'}`}>
+                      {item.event}
+                    </span>
+                  )}
+                  {isSat && item?.worship_leader && !item.event && (
+                    <span className={`text-[10px] font-bold truncate leading-tight rounded-md px-1.5 py-0.5 border select-none w-full text-center mt-2
+                      ${isSelected
+                        ? 'text-primary-700 bg-primary-100/50 border-primary-200/30'
                         : 'text-neutral-600 bg-neutral-100/80 border-neutral-200/40'}`}>
                       {item.worship_leader}
                     </span>
                   )}
-                  {isSat && item && !item.worship_leader && item.sequence_entries.length > 0 && (
+                  {isSat && item && !item.event && !item.worship_leader && item.sequence_entries.length > 0 && (
                     <span className={`text-[10px] font-semibold truncate leading-tight rounded-md px-1.5 py-0.5 border select-none w-full text-center mt-2
-                      ${isSelected 
-                        ? 'text-primary-500 bg-primary-50/50 border-primary-200/30' 
+                      ${isSelected
+                        ? 'text-primary-500 bg-primary-50/50 border-primary-200/30'
                         : 'text-neutral-400 bg-neutral-50/50 border-neutral-200/30'}`}>
                       {item.sequence_entries.length}곡
                     </span>

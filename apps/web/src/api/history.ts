@@ -12,6 +12,7 @@ export interface WeeklyHistoryItem {
   worship_leader: string
   accompanist: string
   prayer_person: string
+  event: string
 }
 
 export async function fetchHistory(yearFrom = 2020): Promise<WeeklyHistoryItem[]> {
@@ -48,7 +49,7 @@ export async function updateHistoryEntry(
 
 export async function updateHistoryRoles(
   weekEndDate: string,
-  payload: { worship_leader: string; accompanist: string; prayer_person: string }
+  payload: { worship_leader: string; accompanist: string; prayer_person: string; event: string }
 ): Promise<void> {
   await apiFetch(`/api/history/weekly/${weekEndDate}/roles`, {
     method: 'PUT',

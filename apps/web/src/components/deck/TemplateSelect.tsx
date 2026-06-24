@@ -18,12 +18,11 @@ export function TemplateSelect() {
     queryFn: fetchDefaultTemplate,
   })
 
-  // 목록이 로드되면 기본 템플릿 → 없으면 첫 번째 템플릿 자동 선택
   useEffect(() => {
     if (templates.length === 0 || templateId) return
 
     const defaultId = defaultTemplate?.template_id
-    const ids = templates.map(n => n.replace(/\.pptx$/i, ''))
+    const ids = templates.map(t => t.id)
 
     const resolved =
       defaultId && ids.includes(defaultId)
@@ -56,16 +55,14 @@ export function TemplateSelect() {
         })
       }}
     >
-      {templates.map(name => {
-        const id = name.replace(/\.pptx$/i, '')
-        const isDefault = id === defaultId
+      {templates.map(item => {
+        const isDefault = item.id === defaultId
         return (
-          <option key={name} value={id}>
-            {id}{isDefault ? ' (기본 템플릿)' : ''}
+          <option key={item.id} value={item.id}>
+            {item.id}{isDefault ? ' (기본 템플릿)' : ''}
           </option>
         )
       })}
     </select>
   )
 }
-

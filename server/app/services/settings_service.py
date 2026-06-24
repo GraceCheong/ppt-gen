@@ -34,3 +34,17 @@ def set_default_template(template_id: str | None) -> None:
     else:
         data.pop("default_template_id", None)
     _write(data)
+
+
+def get_scoped_default_template(scope: str) -> str | None:
+    return _read().get("scoped_defaults", {}).get(scope)
+
+
+def set_scoped_default_template(template_id: str | None, scope: str) -> None:
+    data = _read()
+    scoped = data.setdefault("scoped_defaults", {})
+    if template_id:
+        scoped[scope] = template_id
+    else:
+        scoped.pop(scope, None)
+    _write(data)

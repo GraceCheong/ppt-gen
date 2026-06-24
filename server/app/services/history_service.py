@@ -75,6 +75,7 @@ def update_weekly_roles(
     accompanist: str,
     prayer_person: str,
     church: str = "서울중앙",
+    event: str = "",
 ) -> None:
     """담당자(송리스트·반주자·기도자) 정보를 저장한다. 항목이 없으면 빈 셋리스트로 생성."""
     week_end = datetime.date.fromisoformat(week_end_date)
@@ -87,16 +88,17 @@ def update_weekly_roles(
                 church, week_end_date, week_start_date, updated_at_utc,
                 sequence_entries_json, lyrics_by_title_json,
                 max_lines_per_slide, max_chars_per_line, lyrics_font_size,
-                worship_leader, accompanist, prayer_person
-            ) VALUES (?, ?, ?, ?, '[]', '{}', 4, 18, NULL, ?, ?, ?)
+                worship_leader, accompanist, prayer_person, event
+            ) VALUES (?, ?, ?, ?, '[]', '{}', 4, 18, NULL, ?, ?, ?, ?)
             ON CONFLICT(church, week_end_date) DO UPDATE SET
                 worship_leader=excluded.worship_leader,
                 accompanist=excluded.accompanist,
                 prayer_person=excluded.prayer_person,
+                event=excluded.event,
                 updated_at_utc=excluded.updated_at_utc
             """,
             (church, week_end_date, week_start.isoformat(), updated_at,
-             worship_leader, accompanist, prayer_person),
+             worship_leader, accompanist, prayer_person, event),
         )
         conn.commit()
 
@@ -188,7 +190,7 @@ def list_weekly_repertoire(year_from: int = 2026, church: str = "서울중앙") 
             SELECT week_end_date, week_start_date, updated_at_utc,
                    sequence_entries_json, lyrics_by_title_json,
                    max_lines_per_slide, max_chars_per_line, lyrics_font_size,
-                   worship_leader, accompanist, prayer_person
+                   worship_leader, accompanist, prayer_person, event
             FROM weekly_repertoire
             WHERE church = ? AND week_end_date >= ?
             ORDER BY week_end_date DESC
@@ -209,7 +211,7 @@ def list_all_weekly_repertoire(year_from: int = 2020) -> list[dict]:
             SELECT church, week_end_date, week_start_date, updated_at_utc,
                    sequence_entries_json, lyrics_by_title_json,
                    max_lines_per_slide, max_chars_per_line, lyrics_font_size,
-                   worship_leader, accompanist, prayer_person
+                   worship_leader, accompanist, prayer_person, event
             FROM weekly_repertoire
             WHERE week_end_date >= ?
             ORDER BY week_end_date DESC
@@ -331,6 +333,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         "worship_leader": row["worship_leader"] or "",
         "accompanist": row["accompanist"] or "",
         "prayer_person": row["prayer_person"] or "",
+        "event": row["event"] if "event" in row.keys() else "",
     }
 
 

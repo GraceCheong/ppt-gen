@@ -135,6 +135,7 @@ async def set_weekly_roles(
         str(data.get("accompanist") or "").strip(),
         str(data.get("prayer_person") or "").strip(),
         church=auth.church,
+        event=str(data.get("event") or "").strip(),
     )
     return {"ok": True, "week_end_date": week_end_date}
 

@@ -22,7 +22,12 @@ logging.basicConfig(
 if sys.platform == "win32":
     class _WinConnResetFilter(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
-            return "WinError 10054" not in record.getMessage()
+            if "WinError 10054" in record.getMessage():
+                return False
+            if record.exc_info and record.exc_info[1]:
+                if "10054" in str(record.exc_info[1]):
+                    return False
+            return True
     logging.getLogger("asyncio").addFilter(_WinConnResetFilter())
 
 
