@@ -5,3 +5,9 @@ python-pptx
 pymupdf
 comtypes
 gdown
+slowapi
+argon2-cffi
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib

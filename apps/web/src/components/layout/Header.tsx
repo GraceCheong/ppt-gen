@@ -3,7 +3,7 @@ import { useServerStatus } from '../../hooks/useServerStatus'
 import { isTauri } from '../../api/serverConfig'
 import { TIPS } from '../../constants/tooltips'
 import { useAuthStore } from '../../store/authStore'
-import { Presentation, Calendar, TrendingUp, LogOut, RefreshCw, UserCircle, Building2, User } from 'lucide-react'
+import { Presentation, Calendar, TrendingUp, LogOut, RefreshCw, UserCircle, Building2, User, Music } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 
 const MODE_LABEL: Record<string, string> = {
@@ -84,6 +84,12 @@ export function Header() {
             <TrendingUp className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">워십 그래프</span>
           </NavLink>
+          {mode === 'user' && (
+            <NavLink to="/drive" className={tabClass}>
+              <Music className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">악보 드라이브</span>
+            </NavLink>
+          )}
         </nav>
       </div>
 

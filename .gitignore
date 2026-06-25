@@ -39,4 +39,18 @@ logs/
 *.tmp
 
 # Environment variables (contains secrets, never commit)
-.env
+env/
+
+# Google OAuth token (런타임 생성, 커밋 금지)
+token.json
+token*.json
+gdrive_token*.json
+
+# 루트 레벨 로그 파일
+*.log
+
+old_out/
+
+# 계획 문서 (내부용)
+docs/SHEET_DRIVE_IMPL_PLAN.md
+docs/SHEET_DRIVE_PLAN.md

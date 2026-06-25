@@ -14,3 +14,4 @@ template_executor = ThreadPoolExecutor(max_workers=1)
 
 # asyncio.Task — lifespan에서 설정/취소
 template_sync_task: asyncio.Task | None = None
+gdrive_sync_task: asyncio.Task | None = None

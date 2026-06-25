@@ -10,6 +10,7 @@ import './index.css'
 
 // react-force-graph-2d가 크므로 관계도 페이지는 lazy load
 const GraphPage = lazy(() => import('./pages/GraphPage').then(m => ({ default: m.GraphPage })))
+const DrivePage = lazy(() => import('./pages/DrivePage').then(m => ({ default: m.DrivePage })))
 
 initServerResolution()
 
@@ -46,6 +47,14 @@ function App() {
                     </div>
                   }>
                     <GraphPage />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/drive"
+                element={
+                  <Suspense fallback={<div className="flex-1 flex items-center justify-center h-full text-sm text-gray-400">로딩 중...</div>}>
+                    <DrivePage />
                   </Suspense>
                 }
               />

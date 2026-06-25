@@ -31,6 +31,25 @@ if sys.platform == "win32":
     logging.getLogger("asyncio").addFilter(_WinConnResetFilter())
 
 
+async def _gdrive_sync_loop(interval_sec: int) -> None:
+    """서버 시작 직후 1회 실행 후, interval_sec마다 반복 동기화."""
+    from server.app.services.gdrive_sync import sync_once
+    # 첫 실행
+    try:
+        result = await asyncio.to_thread(sync_once)
+        logger.info("[gdrive] 초기 동기화 완료: %s", result)
+    except Exception as e:
+        logger.warning("[gdrive] 초기 동기화 실패: %s", e)
+    # 주기 반복
+    while True:
+        await asyncio.sleep(interval_sec)
+        try:
+            result = await asyncio.to_thread(sync_once)
+            logger.info("[gdrive] 주기 동기화 완료: %s", result)
+        except Exception as e:
+            logger.warning("[gdrive] 주기 동기화 실패: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # startup
@@ -57,15 +76,27 @@ async def lifespan(app: FastAPI):
     state.template_sync_task = asyncio.create_task(template_sync_loop())
     logger.info("[startup] 템플릿 동기화 태스크 시작됨")
 
+    # Google Drive 자동 동기화 (활성화된 경우)
+    try:
+        from server.app.config import GDRIVE_SYNC_ENABLED, GDRIVE_SYNC_INTERVAL_SEC
+        if GDRIVE_SYNC_ENABLED:
+            state.gdrive_sync_task = asyncio.create_task(
+                _gdrive_sync_loop(GDRIVE_SYNC_INTERVAL_SEC)
+            )
+            logger.info("[startup] Google Drive 주기 동기화 시작 (간격=%ds)", GDRIVE_SYNC_INTERVAL_SEC)
+    except Exception as e:
+        logger.warning("[startup] Google Drive 동기화 시작 실패 (무시): %s", e)
+
     yield
 
     # shutdown
-    if state.template_sync_task and not state.template_sync_task.done():
-        state.template_sync_task.cancel()
-        try:
-            await state.template_sync_task
-        except asyncio.CancelledError:
-            pass
+    for _task in [state.template_sync_task, getattr(state, "gdrive_sync_task", None)]:
+        if _task and not _task.done():
+            _task.cancel()
+            try:
+                await _task
+            except asyncio.CancelledError:
+                pass
     state.executor.shutdown(wait=False)
     state.template_executor.shutdown(wait=False)
     logger.info("[shutdown] 종료 완료")
@@ -76,7 +107,7 @@ def create_app() -> FastAPI:
     from fastapi.middleware.cors import CORSMiddleware
     from slowapi import _rate_limit_exceeded_handler
     from slowapi.errors import RateLimitExceeded
-    from server.app.api import health, lyrics, history, exports, errors, jobs, templates, auth, graph
+    from server.app.api import health, lyrics, history, exports, errors, jobs, templates, auth, graph, sheets
     from server.app.api.rate_limit import limiter
 
     app = FastAPI(title="PO,RR PPT Gen Server", lifespan=lifespan)
@@ -103,6 +134,7 @@ def create_app() -> FastAPI:
     app.include_router(exports.router)
     app.include_router(errors.router)
     app.include_router(jobs.router)
+    app.include_router(sheets.router)
 
     # React 웹앱 서빙 — API 라우터 등록 후 마지막에 추가
     web_dist = os.path.join(ROOT_DIR, "apps", "web", "dist")

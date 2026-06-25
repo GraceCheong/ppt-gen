@@ -4,11 +4,11 @@ from __future__ import annotations
 import os
 import sqlite3
 
-from server.app.config import ROOT_DIR
+from server.app.config import DATA_DIR
 
 
 def history_db_path() -> str:
-    history_dir = os.path.join(ROOT_DIR, "out", "history")
+    history_dir = os.path.join(DATA_DIR, "history")
     os.makedirs(history_dir, exist_ok=True)
     return os.path.join(history_dir, "weekly_repertoire.db")
 
@@ -70,6 +70,9 @@ def init_history_db() -> None:
         _migrate_create_auth_tables(conn)
         _migrate_create_song_usage_events(conn)
         _migrate_add_event(conn)
+        _migrate_create_sheet_tables(conn)
+        _migrate_add_drive_columns(conn)
+        _migrate_add_event_only_column(conn)
         conn.commit()
 
 
@@ -239,6 +242,106 @@ def _migrate_create_song_usage_events(conn: sqlite3.Connection) -> None:
                 """,
                 (church, week_end_date, song_key, title, week_end_date, now),
             )
+
+
+def _migrate_create_sheet_tables(conn: sqlite3.Connection) -> None:
+    """악보 드라이브 테이블 및 인덱스 생성."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sheet_folders (
+            id TEXT PRIMARY KEY,
+            parent_id TEXT,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_by TEXT,
+            deleted_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sheet_files (
+            id TEXT PRIMARY KEY,
+            folder_id TEXT,
+            song_title_key TEXT NOT NULL,
+            display_title TEXT NOT NULL,
+            normalized_title TEXT NOT NULL,
+            key_root TEXT NOT NULL,
+            key_mode TEXT NOT NULL,
+            page_number INTEGER NOT NULL DEFAULT 1,
+            page_count INTEGER,
+            version INTEGER NOT NULL DEFAULT 1,
+            original_filename TEXT NOT NULL,
+            stored_filename TEXT NOT NULL,
+            storage_path TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            extension TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            sha256 TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            uploaded_by TEXT NOT NULL,
+            uploaded_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_by TEXT,
+            deleted_at TEXT,
+            replaced_file_id TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sheet_file_deletions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id TEXT NOT NULL,
+            filename_snapshot TEXT NOT NULL,
+            title_snapshot TEXT NOT NULL,
+            key_root_snapshot TEXT NOT NULL,
+            key_mode_snapshot TEXT NOT NULL,
+            page_number_snapshot INTEGER NOT NULL,
+            version_snapshot INTEGER NOT NULL,
+            storage_path_snapshot TEXT NOT NULL,
+            deleted_by TEXT NOT NULL,
+            deleted_at TEXT NOT NULL,
+            deletion_type TEXT NOT NULL
+        )
+        """
+    )
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sheet_files_song ON sheet_files(song_title_key, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sheet_files_folder ON sheet_files(folder_id, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sheet_folders_parent ON sheet_folders(parent_id, status)"
+        )
+    except sqlite3.OperationalError:
+        pass  # 이미 존재
+
+
+def _migrate_add_drive_columns(conn: sqlite3.Connection) -> None:
+    """sheet_files에 Google Drive 관련 컬럼 추가."""
+    for col, definition in [
+        ("drive_file_id", "TEXT"),
+        ("drive_web_view_link", "TEXT"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE sheet_files ADD COLUMN {col} {definition}")
+        except sqlite3.OperationalError:
+            pass  # 이미 존재
+
+
+def _migrate_add_event_only_column(conn: sqlite3.Connection) -> None:
+    """sheet_files에 is_event_only 컬럼 추가."""
+    try:
+        conn.execute("ALTER TABLE sheet_files ADD COLUMN is_event_only INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # 이미 존재
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────────────────────
