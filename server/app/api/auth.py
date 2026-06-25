@@ -29,6 +29,12 @@ def _set_session_cookie(response: Response, token: str) -> None:
     )
 
 
+@router.get("/auth/churches")
+def get_churches():
+    """회원가입 시 교회 목록 조회 — 인증 불필요."""
+    return {"churches": auth_service.list_churches()}
+
+
 @router.get("/auth/check-id")
 @limiter.limit("20/minute")
 def check_id(request: Request, id: str):

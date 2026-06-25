@@ -117,9 +117,23 @@ def create_user(user_id: str, church: str, nickname: str, password: str) -> None
     now = datetime.now(timezone.utc).isoformat()
     pw_hash = hash_password(password)
     with sqlite3.connect(history_db_path()) as conn:
+        # 교회가 없으면 자동 등록
+        conn.execute(
+            "INSERT OR IGNORE INTO churches (name, created_at) VALUES (?, ?)",
+            (church.strip(), now),
+        )
         conn.execute(
             "INSERT INTO users (id, church, nickname, password_hash, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (user_id, church.strip(), nickname.strip(), pw_hash, now, now),
         )
         conn.commit()
+
+
+def list_churches() -> list[str]:
+    """등록된 교회명 목록을 알파벳/가나다 순으로 반환한다."""
+    with sqlite3.connect(history_db_path()) as conn:
+        rows = conn.execute(
+            "SELECT name FROM churches ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+    return [r[0] for r in rows]

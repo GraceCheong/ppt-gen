@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { searchLyrics, fetchRecentLyrics } from '../../api/lyrics'
-import { getSheetsByTitles, downloadSheetsBySongKey } from '../../api/sheets'
 import type { LyricsCatalogItem } from '../../types/lyrics'
 import { TIPS } from '../../constants/tooltips'
-import { Search, X, Clock, Download } from 'lucide-react'
+import { Search, X, Clock } from 'lucide-react'
 
 interface Props {
   onSelect: (item: LyricsCatalogItem) => void
@@ -33,18 +32,6 @@ export function LyricsSearchDialog({ onSelect, onClose }: Props) {
   })
 
   const items = debounced ? (searchResults ?? []) : (recentResults ?? [])
-
-  // normalize_title 서버 로직과 동일: NFC, strip, 연속공백 축약, 소문자
-  function normTitle(t: string) {
-    return t.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase()
-  }
-
-  const titleKeys = items.map(item => normTitle(item.title))
-  const { data: sheetsMap } = useQuery({
-    queryKey: ['sheets-by-titles', titleKeys],
-    queryFn: () => getSheetsByTitles(titleKeys),
-    enabled: titleKeys.length > 0,
-  })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/40 backdrop-blur-xs px-4" onClick={onClose}>
@@ -83,12 +70,6 @@ export function LyricsSearchDialog({ onSelect, onClose }: Props) {
             </div>
           )}
           {items.map(item => {
-            const titleKey = normTitle(item.title)
-            const sheetFiles = sheetsMap?.[titleKey] ?? []
-            // 같은 key별로 그룹화해서 고유 key 목록 추출
-            const uniqueKeys = Array.from(
-              new Map(sheetFiles.map(f => [f.key_display ?? `${f.key_root}${f.key_mode === 'minor' ? 'm' : ''}`, f])).entries()
-            )
             return (
               <div key={item.title} className="border-b border-neutral-100/50 last:border-0">
                 <button
@@ -112,23 +93,6 @@ export function LyricsSearchDialog({ onSelect, onClose }: Props) {
                   )}
                 </button>
 
-                {uniqueKeys.length > 0 && (
-                  <div className="px-5 pb-2.5 flex flex-wrap gap-1.5">
-                    {uniqueKeys.map(([keyDisplay, file]) => (
-                      <button
-                        key={keyDisplay}
-                        onClick={e => {
-                          e.stopPropagation()
-                          downloadSheetsBySongKey(titleKey, file.key_root, file.key_mode)
-                        }}
-                        className="flex items-center gap-1 text-[9px] font-bold bg-primary-50 text-primary-600 border border-primary-100 rounded px-2 py-1 hover:bg-primary-100 hover:border-primary-200 transition-all cursor-pointer"
-                      >
-                        <Download className="w-2.5 h-2.5" />
-                        {keyDisplay} 악보 다운로드
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             )
           })}

@@ -91,6 +91,7 @@ async def upload_sheet(
     page_count: int | None = Form(None),
     folder_id: str | None = Form(None),
     on_conflict: str = Form("error"),
+    subtitle: str = Form(""),
     ctx: AuthContext = Depends(require_user),
 ):
     mime_type = file.content_type or ""
@@ -121,6 +122,7 @@ async def upload_sheet(
         mime_type=mime_type,
         uploaded_by=ctx.user_id,
         on_conflict=on_conflict,
+        subtitle=subtitle,
     )
     return result
 
@@ -192,6 +194,14 @@ def permanent_delete_folder(folder_id: str, ctx: AuthContext = Depends(require_u
 
 
 # ── 곡 DB 연동 ──────────────────────────────────────────────────────────────────
+
+@router.get("/by-title")
+def get_sheets_by_title(title: str, ctx: AuthContext = Depends(require_user)):
+    from server.app.services.sheet_service import normalize_title
+    title_key = normalize_title(title)
+    items = sheet_service.get_sheets_by_song(title_key)
+    return {"items": items}
+
 
 @router.get("/by-song/{title_key}")
 def get_sheets_by_song(title_key: str, ctx: AuthContext = Depends(require_user)):
@@ -315,6 +325,7 @@ async def update_sheet(file_id: str, request: Request, ctx: AuthContext = Depend
             page_number=data.get("page_number"),
             page_count=data.get("page_count"),
             is_event_only=bool(is_event_only) if is_event_only is not None else None,
+            subtitle=data.get("subtitle"),
         )
     except FileNotFoundError as e:
         raise HTTPException(404, detail=str(e))

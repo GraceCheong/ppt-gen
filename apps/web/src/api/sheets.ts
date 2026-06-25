@@ -28,6 +28,7 @@ export interface SheetFile {
   deleted_at: string | null
   replaced_file_id: string | null
   is_event_only: boolean
+  subtitle: string
 }
 
 export interface SheetFolder {
@@ -195,6 +196,11 @@ export async function permanentDeleteFolder(folderId: string): Promise<void> {
 
 export async function getSheetsBySong(titleKey: string): Promise<SheetFile[]> {
   const data = await apiFetch<{ items: SheetFile[] }>(`/api/sheets/by-song/${encodeURIComponent(titleKey)}`)
+  return data.items
+}
+
+export async function fetchSheetsByTitle(title: string): Promise<SheetFile[]> {
+  const data = await apiFetch<{ items: SheetFile[] }>(`/api/sheets/by-title?title=${encodeURIComponent(title)}`)
   return data.items
 }
 

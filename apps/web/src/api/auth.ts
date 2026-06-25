@@ -43,3 +43,8 @@ export async function apiLogout(): Promise<void> {
 export async function checkIdAvailable(id: string): Promise<{ available: boolean; reason?: string }> {
   return apiFetch(`/auth/check-id?id=${encodeURIComponent(id)}`)
 }
+
+export async function fetchChurches(): Promise<string[]> {
+  const data = await apiFetch<{ churches: string[] }>('/auth/churches')
+  return data.churches
+}

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { SongEntry, PptSettings } from '../types/project'
 import { DEFAULT_SETTINGS } from '../types/project'
 
@@ -24,48 +25,61 @@ interface ProjectState {
   loadSongs: (songs: SongEntry[]) => void
 }
 
-export const useProjectStore = create<ProjectState>((set) => ({
-  songs: [],
-  selectedSongId: null,
-  templateId: null,
-  settings: { ...DEFAULT_SETTINGS },
+export const useProjectStore = create<ProjectState>()(
+  persist(
+    (set) => ({
+      songs: [],
+      selectedSongId: null,
+      templateId: null,
+      settings: { ...DEFAULT_SETTINGS },
 
-  addSong: (songData) => {
-    const song: SongEntry = { id: genId(), ...songData }
-    set((state) => ({ songs: [...state.songs, song], selectedSongId: song.id }))
-    return song
-  },
+      addSong: (songData) => {
+        const song: SongEntry = { id: genId(), ...songData }
+        set((state) => ({ songs: [...state.songs, song], selectedSongId: song.id }))
+        return song
+      },
 
-  updateSong: (id, patch) =>
-    set((state) => ({
-      songs: state.songs.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-    })),
+      updateSong: (id, patch) =>
+        set((state) => ({
+          songs: state.songs.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+        })),
 
-  removeSong: (id) =>
-    set((state) => {
-      const next = state.songs.filter((s) => s.id !== id)
-      const selected =
-        state.selectedSongId === id
-          ? (next[0]?.id ?? null)
-          : state.selectedSongId
-      return { songs: next, selectedSongId: selected }
+      removeSong: (id) =>
+        set((state) => {
+          const next = state.songs.filter((s) => s.id !== id)
+          const selected =
+            state.selectedSongId === id
+              ? (next[0]?.id ?? null)
+              : state.selectedSongId
+          return { songs: next, selectedSongId: selected }
+        }),
+
+      reorderSongs: (from, to) =>
+        set((state) => {
+          const songs = [...state.songs]
+          const [moved] = songs.splice(from, 1)
+          songs.splice(to, 0, moved)
+          return { songs }
+        }),
+
+      selectSong: (id) => set({ selectedSongId: id }),
+
+      setTemplateId: (id) => set({ templateId: id }),
+
+      updateSettings: (patch) =>
+        set((state) => ({ settings: { ...state.settings, ...patch } })),
+
+      loadSongs: (songs) =>
+        set({ songs, selectedSongId: songs[0]?.id ?? null }),
     }),
-
-  reorderSongs: (from, to) =>
-    set((state) => {
-      const songs = [...state.songs]
-      const [moved] = songs.splice(from, 1)
-      songs.splice(to, 0, moved)
-      return { songs }
-    }),
-
-  selectSong: (id) => set({ selectedSongId: id }),
-
-  setTemplateId: (id) => set({ templateId: id }),
-
-  updateSettings: (patch) =>
-    set((state) => ({ settings: { ...state.settings, ...patch } })),
-
-  loadSongs: (songs) =>
-    set({ songs, selectedSongId: songs[0]?.id ?? null }),
-}))
+    {
+      name: 'porr-project',
+      partialize: (state) => ({
+        songs: state.songs,
+        selectedSongId: state.selectedSongId,
+        templateId: state.templateId,
+        settings: state.settings,
+      }),
+    }
+  )
+)

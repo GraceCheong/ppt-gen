@@ -26,7 +26,7 @@ def _generate_pdf_thumb(file_id: str, storage_path: str) -> None:
         os.makedirs(SHEET_THUMB_DIR, exist_ok=True)
         doc = fitz.open(storage_path)
         page = doc[0]
-        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+        pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
         pix.save(os.path.join(SHEET_THUMB_DIR, f"{file_id}.jpg"))
         doc.close()
     except Exception:
@@ -59,29 +59,6 @@ def _now_iso() -> str:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-# ── 곡 DB 자동 연동 ────────────────────────────────────────────────────────────
-
-def ensure_song_exists(conn: sqlite3.Connection, display_title: str) -> str:
-    """lyrics_catalog에서 title_key를 찾거나 없으면 새 행을 INSERT. title_key 반환."""
-    title_key = normalize_title(display_title)
-    row = conn.execute(
-        "SELECT title_key FROM lyrics_catalog WHERE title_key=?", (title_key,)
-    ).fetchone()
-    if row:
-        return row[0]
-    now = _now_iso()
-    conn.execute(
-        """
-        INSERT INTO lyrics_catalog
-            (title_key, display_title, english_title, sequence, lyrics, source,
-             created_at_utc, updated_at_utc)
-        VALUES (?, ?, '', '', '', 'sheet_upload', ?, ?)
-        """,
-        (title_key, display_title, now, now),
-    )
-    return title_key
 
 
 # ── 핵심 서비스 함수 ─────────────────────────────────────────────────────────────
@@ -183,6 +160,7 @@ def upload_sheet(
     mime_type: str,
     uploaded_by: str,
     on_conflict: str = "error",
+    subtitle: str = "",
 ) -> dict:
     """
     저장 경로: SHEET_DRIVE_DIR / {uuid}.{ext}
@@ -199,8 +177,8 @@ def upload_sheet(
 
     with sqlite3.connect(history_db_path()) as conn:
         conn.row_factory = sqlite3.Row
-        title_key = ensure_song_exists(conn, display_title)
-        normalized = normalize_title(display_title)
+        title_key = normalize_title(display_title)
+        normalized = title_key
 
         # 충돌 확인: 동일 곡/key_root/key_mode/page_number의 active 파일
         existing = conn.execute(
@@ -251,8 +229,8 @@ def upload_sheet(
                  mime_type, extension, size_bytes, sha256,
                  status, uploaded_by, uploaded_at, updated_at,
                  deleted_by, deleted_at, replaced_file_id,
-                 drive_file_id, drive_web_view_link)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, ?, NULL, NULL)
+                 drive_file_id, drive_web_view_link, subtitle)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, NULL, ?, NULL, NULL, ?)
             """,
             (
                 file_id, folder_id, title_key, display_title, normalized,
@@ -261,6 +239,7 @@ def upload_sheet(
                 mime_type, ext, len(file_bytes), sha256_val,
                 uploaded_by, now, now,
                 replaced_file_id,
+                subtitle.strip(),
             ),
         )
         conn.commit()
@@ -320,6 +299,7 @@ def update_sheet_meta(
     page_number: int | None = None,
     page_count: int | None = None,
     is_event_only: bool | None = None,
+    subtitle: str | None = None,
 ) -> dict:
     sheet = get_sheet(file_id)
     if not sheet:
@@ -329,8 +309,11 @@ def update_sheet_meta(
     if display_title is not None:
         updates.append("display_title = ?")
         params.append(display_title.strip())
+        title_key = normalize_title(display_title)
         updates.append("normalized_title = ?")
-        params.append(normalize_title(display_title))
+        params.append(title_key)
+        updates.append("song_title_key = ?")
+        params.append(title_key)
     if key_root is not None:
         updates.append("key_root = ?")
         params.append(key_root)
@@ -346,6 +329,9 @@ def update_sheet_meta(
     if is_event_only is not None:
         updates.append("is_event_only = ?")
         params.append(1 if is_event_only else 0)
+    if subtitle is not None:
+        updates.append("subtitle = ?")
+        params.append(subtitle.strip())
     if not updates:
         return sheet
     updates.append("updated_at = ?")

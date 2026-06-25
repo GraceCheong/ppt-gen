@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useProjectStore } from '../../store/projectStore'
 import { SequenceInput } from './SequenceInput'
 import { downloadLyrics } from '../../api/lyrics'
+import { fetchSheetsByTitle, downloadSheetFile } from '../../api/sheets'
+import type { SheetFile } from '../../api/sheets'
+import { UploadModal } from '../sheets/UploadModal'
+import { PreviewModal } from '../sheets/PreviewModal'
 import {
   DEFAULT_NO_LYRICS_PARTS,
   getUniqueParts,
@@ -9,7 +14,7 @@ import {
   getLyricsSectionStatus,
 } from '../../types/project'
 import { TIPS } from '../../constants/tooltips'
-import { Download, FileText } from 'lucide-react'
+import { Download, Eye, FileText, Music, Upload } from 'lucide-react'
 
 export function LyricsEditorPanel() {
   const { songs, selectedSongId, updateSong } = useProjectStore()
@@ -101,6 +106,7 @@ export function LyricsEditorPanel() {
           onChange={seq => updateSong(songId, { sequence: seq })}
         />
         <PartButtons song={song} updateSong={updateSong} lyrics={localLyrics} />
+        <SheetPanel songTitle={song.title} />
       </div>
 
       {/* 가사 */}
@@ -134,6 +140,104 @@ export function LyricsEditorPanel() {
   )
 }
 
+// ── 악보 패널 ─────────────────────────────────────────────────────────────────
+
+function SheetPanel({ songTitle }: { songTitle: string }) {
+  const [showUpload, setShowUpload] = useState(false)
+  const [previewFile, setPreviewFile] = useState<SheetFile | null>(null)
+
+  const { data: sheets, isLoading, refetch } = useQuery({
+    queryKey: ['sheets-by-title', songTitle],
+    queryFn: () => fetchSheetsByTitle(songTitle),
+    enabled: !!songTitle.trim(),
+    staleTime: 60_000,
+  })
+
+  const keyGroups = useMemo(() => {
+    if (!sheets?.length) return []
+    const map = new Map<string, SheetFile[]>()
+    for (const s of sheets) {
+      const k = s.key_root
+        ? `${s.key_root}${s.key_mode === 'minor' ? 'm' : ''}`
+        : '키없음'
+      if (!map.has(k)) map.set(k, [])
+      map.get(k)!.push(s)
+    }
+    return [...map.entries()].map(([key, files]) => {
+      const sorted = [...files].sort((a, b) => a.page_number - b.page_number)
+      return { key, rep: sorted[0] }
+    })
+  }, [sheets])
+
+  if (!songTitle.trim() || isLoading) return null
+
+  return (
+    <>
+      <div className="mt-2.5">
+        <div className="flex items-center gap-1.5 mb-2">
+          <Music className="w-2.5 h-2.5 text-neutral-400" />
+          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">악보</span>
+        </div>
+
+        {keyGroups.length > 0 ? (
+          <div className="flex gap-2 flex-wrap">
+            {keyGroups.map(({ key, rep }) => (
+              <div
+                key={key}
+                className="flex items-center gap-1.5 bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-1.5 hover:border-neutral-300 transition-colors min-w-[5rem]"
+              >
+                <span className="text-xs font-mono font-bold text-neutral-700 flex-1">{key}</span>
+                <button
+                  onClick={() => setPreviewFile(rep)}
+                  title="미리보기"
+                  className="p-0.5 text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => downloadSheetFile(rep.id)}
+                  title="다운로드"
+                  className="p-0.5 text-neutral-400 hover:text-primary-600 transition-colors cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-[10px] text-neutral-400">
+            <span>다운로드 가능한 악보가 없습니다. 업로드 하시겠습니까?</span>
+            <button
+              onClick={() => setShowUpload(true)}
+              className="flex items-center gap-0.5 text-primary-500 hover:text-primary-700 font-semibold transition-colors cursor-pointer"
+            >
+              <Upload className="w-3 h-3" />
+              업로드
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showUpload && (
+        <UploadModal
+          folderId={null}
+          initialTitle={songTitle}
+          onClose={() => setShowUpload(false)}
+          onSuccess={() => { refetch() }}
+        />
+      )}
+
+      {previewFile && sheets && (
+        <PreviewModal
+          file={previewFile}
+          versions={sheets}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
+    </>
+  )
+}
+
 // ── 파트 토글 버튼 ────────────────────────────────────────────────────────────
 
 import type { SongEntry } from '../../types/project'
@@ -144,18 +248,10 @@ interface PartButtonsProps {
   updateSong: (id: string, patch: Partial<Omit<SongEntry, 'id'>>) => void
 }
 
-function PartButtons({ song, lyrics, updateSong }: PartButtonsProps) {
+function PartButtons({ song, lyrics }: PartButtonsProps) {
   const uniqueParts = useMemo(() => getUniqueParts(song.sequence), [song.sequence])
 
   if (uniqueParts.length === 0) return null
-
-  function toggleNoLyrics(part: string) {
-    const current = song.noLyricsParts ?? uniqueParts.filter(p => DEFAULT_NO_LYRICS_PARTS.has(p))
-    const next = current.includes(part)
-      ? current.filter(p => p !== part)
-      : [...current, part]
-    updateSong(song.id, { noLyricsParts: next })
-  }
 
   return (
     <div className="mt-2.5">
@@ -167,30 +263,34 @@ function PartButtons({ song, lyrics, updateSong }: PartButtonsProps) {
         {uniqueParts.map(part => {
           const noLyrics = isPartNoLyrics(song, part)
           const status = noLyrics ? null : getLyricsSectionStatus(lyrics, part, uniqueParts)
+          const isDefaultNoLyrics = DEFAULT_NO_LYRICS_PARTS.has(part)
 
           return (
-            <button
+            <div
               key={part}
-              type="button"
-              onClick={() => toggleNoLyrics(part)}
               title={
-                noLyrics            ? TIPS.editor.partNoLyrics(part)
-                : status === 'has-content' ? TIPS.editor.partHasLyrics(part)
-                : status === 'empty'       ? TIPS.editor.partEmpty(part)
-                :                            TIPS.editor.partMissing(part)
+                noLyrics && isDefaultNoLyrics ? TIPS.editor.partNoLyrics(part)
+                : noLyrics                    ? TIPS.editor.partNoLyrics(part)
+                : status === 'has-content'    ? TIPS.editor.partHasLyrics(part)
+                : status === 'empty'          ? TIPS.editor.partEmpty(part)
+                :                               TIPS.editor.partMissing(part)
               }
-              className={`text-[10px] font-bold rounded-lg px-2.5 py-1.5 transition-all select-none font-mono border cursor-pointer
-                ${noLyrics
-                  ? 'text-neutral-400 bg-neutral-50 border-neutral-200/50 hover:bg-neutral-100 hover:border-neutral-300'
+              className={`text-[10px] font-bold rounded-lg px-2.5 py-1.5 select-none font-mono border
+                ${noLyrics && isDefaultNoLyrics
+                  ? 'text-neutral-400 bg-neutral-50 border-neutral-200/50'
+                  : noLyrics
+                  ? 'text-danger-500 bg-danger-50 border-danger-100'
                   : status === 'has-content'
-                  ? 'text-success-600 bg-success-50 border-success-100 hover:bg-success-100/50'
+                  ? 'text-success-600 bg-success-50 border-success-100'
                   : status === 'empty'
-                  ? 'text-warning-600 bg-warning-50 border-warning-200 hover:bg-warning-100/50'
-                  : 'text-danger-600 bg-danger-50 border-danger-100 hover:bg-danger-100/50'
+                  ? 'text-warning-600 bg-warning-50 border-warning-200'
+                  : 'text-danger-600 bg-danger-50 border-danger-100'
                 }`}
             >
-              {noLyrics ? <span className="line-through text-neutral-300">{part}</span> : part}
-            </button>
+              {noLyrics && isDefaultNoLyrics
+                ? <span className="line-through opacity-50">{part}</span>
+                : part}
+            </div>
           )
         })}
       </div>

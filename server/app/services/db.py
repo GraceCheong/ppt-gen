@@ -73,6 +73,8 @@ def init_history_db() -> None:
         _migrate_create_sheet_tables(conn)
         _migrate_add_drive_columns(conn)
         _migrate_add_event_only_column(conn)
+        _migrate_add_sheet_subtitle(conn)
+        _migrate_create_churches_table(conn)
         conn.commit()
 
 
@@ -288,7 +290,8 @@ def _migrate_create_sheet_tables(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL,
             deleted_by TEXT,
             deleted_at TEXT,
-            replaced_file_id TEXT
+            replaced_file_id TEXT,
+        subtitle TEXT NOT NULL DEFAULT ''
         )
         """
     )
@@ -342,6 +345,39 @@ def _migrate_add_event_only_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sheet_files ADD COLUMN is_event_only INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # 이미 존재
+
+
+def _migrate_add_sheet_subtitle(conn: sqlite3.Connection) -> None:
+    """sheet_files에 subtitle 컬럼 추가."""
+    try:
+        conn.execute("ALTER TABLE sheet_files ADD COLUMN subtitle TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # 이미 존재
+
+
+def _migrate_create_churches_table(conn: sqlite3.Connection) -> None:
+    """교회 레지스트리 테이블 생성 후, 기존 users/weekly_repertoire에서 교회명을 시드한다."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS churches (
+            name TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    # 기존 데이터에서 교회명을 수집해 시드 (users + weekly_repertoire)
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    existing_churches: set[str] = set()
+    for (name,) in conn.execute("SELECT DISTINCT church FROM weekly_repertoire WHERE church != ''").fetchall():
+        existing_churches.add(name.strip())
+    for (name,) in conn.execute("SELECT DISTINCT church FROM users WHERE church != ''").fetchall():
+        existing_churches.add(name.strip())
+    for name in existing_churches:
+        conn.execute(
+            "INSERT OR IGNORE INTO churches (name, created_at) VALUES (?, ?)",
+            (name, now),
+        )
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────────────────────

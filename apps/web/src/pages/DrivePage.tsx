@@ -6,16 +6,18 @@ import {
   Search, Upload, FolderPlus, Trash2, Download, Folder, FileText, FileImage,
   RotateCcw, X, ChevronRight, Home, RefreshCw, ExternalLink,
   LayoutList, LayoutGrid, ChevronUp, ChevronDown, ChevronsUpDown,
-  Pencil, Eye, ZoomIn, ZoomOut, ChevronLeft, SlidersHorizontal,
+  Pencil, Eye, ZoomIn, ZoomOut, SlidersHorizontal, ChevronsDown, ChevronsUp,
 } from 'lucide-react'
 import {
-  searchSheets, listFolders, listTrash, uploadSheet, deleteSheet,
+  searchSheets, listFolders, listTrash, deleteSheet,
   restoreSheet, permanentDeleteSheet, deleteFolder,
   createFolder, downloadSheetFile,
   fetchSheetMe, fetchSyncStatus, triggerSync,
 } from '../api/sheets'
 import { getServerUrl } from '../api/serverConfig'
-import type { SheetFile, SheetFolder, UploadConflict, SyncStatus } from '../api/sheets'
+import type { SheetFile, SheetFolder, SyncStatus } from '../api/sheets'
+import { UploadModal, BASE_NOTES, uiToKeyFields, formatKey } from '../components/sheets/UploadModal'
+import { PreviewModal } from '../components/sheets/PreviewModal'
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp'])
 function isImageExt(ext: string | null | undefined) { return IMAGE_EXTS.has(ext?.toLowerCase() ?? '') }
@@ -40,220 +42,17 @@ function PdfThumb({ fileId, serverUrl }: { fileId: string; serverUrl: string }) 
   )
 }
 
-const BASE_NOTES = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
-
 // 'C#', minor → base='C', suffix='#m'
 function parseKeyToUI(root: string, mode: string): { base: string; suffix: string } {
   if (!root) return { base: '', suffix: '' }
   const base = root[0].toUpperCase()
-  const accidental = root.slice(1) // '#', 'b', or ''
+  const accidental = root.slice(1)
   const suffix = accidental + (mode === 'minor' ? 'm' : '')
   return { base, suffix }
 }
 
-// base='C', suffix='#m' → root='C#', mode='minor'
-function uiToKeyFields(base: string, suffix: string): { key_root: string; key_mode: string } {
-  if (!base) return { key_root: '', key_mode: 'major' }
-  const s = suffix.trim()
-  const isMinor = /m$/i.test(s)
-  const accidental = s.replace(/m$/i, '')
-  return {
-    key_root: base + accidental,
-    key_mode: isMinor ? 'minor' : 'major',
-  }
-}
-
-function formatKey(root: string, mode: string) {
-  return mode === 'minor' ? `${root}m` : root
-}
-
 function formatDate(iso: string) {
   return iso ? new Date(iso).toLocaleDateString('ko-KR') : ''
-}
-
-// ── 업로드 모달 ────────────────────────────────────────────────────────────────
-
-interface UploadModalProps {
-  folderId: string | null
-  onClose: () => void
-  onSuccess: () => void
-}
-
-function UploadModal({ folderId, onClose, onSuccess }: UploadModalProps) {
-  const [file, setFile] = useState<File | null>(null)
-  const [title, setTitle] = useState('')
-  const [baseNote, setBaseNote] = useState('C')
-  const [suffix, setSuffix] = useState('')
-  const [pageNumber, setPageNumber] = useState(1)
-  const [pageCount, setPageCount] = useState<number | ''>('')
-  const [conflict, setConflict] = useState<UploadConflict | null>(null)
-  const [error, setError] = useState('')
-
-  const qc = useQueryClient()
-
-  async function handleUpload(onConflict: 'error' | 'replace' | 'version' = 'error') {
-    if (!file || !title.trim()) {
-      setError('파일과 악보 제목을 입력하세요.')
-      return
-    }
-    setError('')
-    const { key_root: keyRoot, key_mode: keyMode } = uiToKeyFields(baseNote, suffix)
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('title', title.trim())
-    fd.append('key_root', keyRoot)
-    fd.append('key_mode', keyMode)
-    fd.append('page_number', String(pageNumber))
-    if (pageCount !== '') fd.append('page_count', String(pageCount))
-    if (folderId) fd.append('folder_id', folderId)
-    fd.append('on_conflict', onConflict)
-
-    try {
-      const result = await uploadSheet(fd)
-      if ((result as UploadConflict).conflict) {
-        setConflict(result as UploadConflict)
-        return
-      }
-      qc.invalidateQueries({ queryKey: ['sheets'] })
-      onSuccess()
-      onClose()
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '업로드 실패')
-    }
-  }
-
-  if (conflict) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/40 backdrop-blur-xs px-4" onClick={onClose}>
-        <div className="bg-white border border-neutral-200 rounded-2xl shadow-2xl w-full max-w-sm p-6 flex flex-col gap-4" onClick={e => e.stopPropagation()}>
-          <h3 className="text-sm font-bold text-neutral-800">이미 같은 악보가 있습니다</h3>
-          <p className="text-xs text-neutral-500">
-            {conflict.title_key} / {formatKey(conflict.key_root, conflict.key_mode)} / {conflict.page_number}p
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => { setConflict(null); handleUpload('replace') }}
-              className="flex-1 px-3 py-2 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors cursor-pointer"
-            >
-              업데이트
-            </button>
-            <button
-              onClick={() => { setConflict(null); handleUpload('version') }}
-              className="flex-1 px-3 py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-lg hover:bg-neutral-200 transition-colors cursor-pointer"
-            >
-              v{/* existing version + 1 */}2로 추가
-            </button>
-            <button
-              onClick={() => setConflict(null)}
-              className="px-3 py-2 text-xs font-semibold text-neutral-400 hover:text-neutral-600 cursor-pointer"
-            >
-              취소
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/40 backdrop-blur-xs px-4" onClick={onClose}>
-      <div className="bg-white border border-neutral-200 rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b border-neutral-100 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-neutral-800">악보 업로드</h3>
-          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600 cursor-pointer"><X className="w-4 h-4" /></button>
-        </div>
-
-        <div className="p-4 flex flex-col gap-3">
-          <div>
-            <label className="text-xs font-semibold text-neutral-600 mb-1 block">파일</label>
-            <input
-              type="file"
-              accept="application/pdf,image/*"
-              onChange={e => setFile(e.target.files?.[0] ?? null)}
-              className="w-full text-xs text-neutral-700 file:mr-2 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 cursor-pointer"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-neutral-600 mb-1 block">악보 제목</label>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="예: 주의 은혜라"
-              className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-primary-400"
-            />
-          </div>
-
-          <div className="flex gap-2">
-            <div className="w-24 shrink-0">
-              <label className="text-xs font-semibold text-neutral-600 mb-1 block">코드</label>
-              <select
-                value={baseNote}
-                onChange={e => setBaseNote(e.target.value)}
-                className="w-full border border-neutral-200 rounded-lg px-2 py-2 text-xs outline-none focus:border-primary-400"
-              >
-                <option value="">없음</option>
-                {BASE_NOTES.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-            <div className="flex-1">
-              <label className="text-xs font-semibold text-neutral-600 mb-1 block">변형 (#, b, m 등)</label>
-              <input
-                type="text"
-                value={suffix}
-                onChange={e => setSuffix(e.target.value)}
-                placeholder="예: #m, b, #, bm"
-                className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-primary-400 font-mono"
-              />
-            </div>
-            <div className="shrink-0 pt-5">
-              <span className="text-xs font-mono font-bold text-primary-600">
-                {uiToKeyFields(baseNote, suffix).key_root || '—'}
-                {uiToKeyFields(baseNote, suffix).key_mode === 'minor' ? ' m' : ''}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="text-xs font-semibold text-neutral-600 mb-1 block">Page Number</label>
-              <input
-                type="number"
-                min={1}
-                value={pageNumber}
-                onChange={e => setPageNumber(Number(e.target.value))}
-                className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-primary-400"
-              />
-            </div>
-            <div className="flex-1">
-              <label className="text-xs font-semibold text-neutral-600 mb-1 block">Page Count</label>
-              <input
-                type="number"
-                min={1}
-                value={pageCount}
-                onChange={e => setPageCount(e.target.value === '' ? '' : Number(e.target.value))}
-                placeholder="선택"
-                className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-primary-400"
-              />
-            </div>
-          </div>
-
-          {error && <p className="text-xs text-red-500">{error}</p>}
-        </div>
-
-        <div className="px-4 pb-4 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 text-xs font-semibold text-neutral-500 hover:text-neutral-700 cursor-pointer">취소</button>
-          <button
-            onClick={() => handleUpload('error')}
-            className="px-4 py-2 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors cursor-pointer"
-          >
-            업로드
-          </button>
-        </div>
-      </div>
-    </div>
-  )
 }
 
 // ── 악보 수정 모달 ────────────────────────────────────────────────────────────
@@ -266,6 +65,7 @@ interface EditSheetModalProps {
 
 function EditSheetModal({ file, onClose, onSuccess }: EditSheetModalProps) {
   const [title, setTitle] = useState(file.display_title)
+  const [subtitle, setSubtitle] = useState(file.subtitle ?? '')
   const { base: initBase, suffix: initSuffix } = parseKeyToUI(file.key_root, file.key_mode)
   const [baseNote, setBaseNote] = useState(initBase)
   const [suffix, setSuffix] = useState(initSuffix)
@@ -287,6 +87,7 @@ function EditSheetModal({ file, onClose, onSuccess }: EditSheetModalProps) {
         credentials: 'include',
         body: JSON.stringify({
           display_title: title.trim(),
+          subtitle: subtitle.trim(),
           key_root: keyRoot,
           key_mode: keyMode,
           page_number: pageNumber,
@@ -299,6 +100,7 @@ function EditSheetModal({ file, onClose, onSuccess }: EditSheetModalProps) {
         throw new Error(body.detail ?? `[${res.status}]`)
       }
       qc.invalidateQueries({ queryKey: ['sheets'] })
+      qc.invalidateQueries({ queryKey: ['sheets-by-title'] })
       onSuccess()
       onClose()
     } catch (e: unknown) {
@@ -323,6 +125,16 @@ function EditSheetModal({ file, onClose, onSuccess }: EditSheetModalProps) {
               type="text"
               value={title}
               onChange={e => setTitle(e.target.value)}
+              className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-primary-400"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-neutral-600 mb-1 block">부제 <span className="text-neutral-400 font-normal">(선택)</span></label>
+            <input
+              type="text"
+              value={subtitle}
+              onChange={e => setSubtitle(e.target.value)}
+              placeholder="예: You Are My Everything"
               className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-primary-400"
             />
           </div>
@@ -387,136 +199,6 @@ function EditSheetModal({ file, onClose, onSuccess }: EditSheetModalProps) {
             className="px-4 py-2 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors cursor-pointer">
             {saving ? '저장 중...' : '저장'}
           </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── 미리보기 모달 ─────────────────────────────────────────────────────────────
-
-interface PreviewModalProps {
-  file: SheetFile
-  versions: SheetFile[]  // 같은 song_title_key + key + page 의 모든 버전 (version 오름차순)
-  onClose: () => void
-  onEdit: () => void
-}
-
-function PreviewModal({ file, versions, onClose, onEdit }: PreviewModalProps) {
-  const [idx, setIdx] = useState(() => {
-    const i = versions.findIndex(v => v.id === file.id)
-    return i >= 0 ? i : versions.length - 1
-  })
-  const current = versions[idx] ?? file
-  const previewUrl = `/api/sheets/${current.id}/preview`
-  const isPdf = current.extension === 'pdf'
-  const isImage = isImageExt(current.extension)
-  const hasVersions = versions.length > 1
-
-  // 키 기준 그룹핑 (네비게이션 바용)
-  const keyMap = new Map<string, { file: SheetFile; globalIdx: number }[]>()
-  const keyOrder: string[] = []
-  versions.forEach((v, gi) => {
-    const k = v.key_root ? formatKey(v.key_root, v.key_mode) : '—'
-    if (!keyMap.has(k)) { keyMap.set(k, []); keyOrder.push(k) }
-    keyMap.get(k)!.push({ file: v, globalIdx: gi })
-  })
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/60 backdrop-blur-sm px-4 py-6" onClick={onClose}>
-      {/* 고정 크기: 뷰포트의 90% 높이 */}
-      <div className="bg-white border border-neutral-200 rounded-2xl shadow-2xl w-full max-w-3xl h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-        {/* 헤더 */}
-        <div className="p-4 border-b border-neutral-100 flex items-center justify-between shrink-0 gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <FileText className="w-4 h-4 text-neutral-400 shrink-0" />
-            <span className="text-sm font-bold text-neutral-800 truncate">{current.display_title}</span>
-            {current.key_root && (
-              <span className="font-mono text-[10px] bg-primary-50 text-primary-600 px-1.5 py-0.5 rounded font-semibold shrink-0">
-                {formatKey(current.key_root, current.key_mode)}
-              </span>
-            )}
-            {current.page_number > 1 && (
-              <span className="text-[10px] text-neutral-400 shrink-0">{current.page_number}p</span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button onClick={onEdit}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-lg hover:bg-neutral-200 transition-colors cursor-pointer">
-              <Pencil className="w-3 h-3" />수정
-            </button>
-            <button onClick={() => downloadSheetFile(current.id)}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors cursor-pointer">
-              <Download className="w-3 h-3" />다운로드
-            </button>
-            <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600 cursor-pointer p-1">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* 키 + 버전 네비게이션 바 (화살표 없이 pill만) */}
-        {hasVersions && (
-          <div className="px-3 py-2 border-b border-neutral-100 flex items-center gap-1.5 shrink-0 bg-neutral-50 flex-wrap">
-            {keyOrder.map(k => {
-              const items = keyMap.get(k)!
-              return (
-                <div key={k} className="flex items-center gap-0.5">
-                  {items.map(({ file: v, globalIdx: gi }, vi) => {
-                    const label = items.length > 1 ? `${k} v${vi + 1}` : k
-                    return (
-                      <button
-                        key={v.id}
-                        onClick={() => setIdx(gi)}
-                        className={`px-2 py-0.5 rounded text-[11px] font-semibold font-mono transition-colors cursor-pointer ${
-                          gi === idx ? 'bg-primary-600 text-white' : 'bg-neutral-200 text-neutral-600 hover:bg-neutral-300'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </div>
-        )}
-
-        {/* 미리보기 — 양쪽 큰 화살표 오버레이 포함 */}
-        <div className="relative flex-1 overflow-auto bg-neutral-50">
-          {/* 왼쪽 화살표 */}
-          {hasVersions && idx > 0 && (
-            <button
-              onClick={() => setIdx(i => i - 1)}
-              className="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors cursor-pointer shadow-lg"
-            >
-              <ChevronLeft className="w-7 h-7" />
-            </button>
-          )}
-          {/* 오른쪽 화살표 */}
-          {hasVersions && idx < versions.length - 1 && (
-            <button
-              onClick={() => setIdx(i => i + 1)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors cursor-pointer shadow-lg"
-            >
-              <ChevronRight className="w-7 h-7" />
-            </button>
-          )}
-          {isPdf ? (
-            <iframe src={previewUrl} className="w-full h-full" title={current.display_title} />
-          ) : isImage ? (
-            <img src={previewUrl} alt={current.display_title} className="w-full h-full object-contain p-4" />
-          ) : (
-            <div className="flex items-center justify-center h-full text-neutral-400 text-sm">
-              이 형식은 미리보기를 지원하지 않습니다
-            </div>
-          )}
-        </div>
-        <div className="px-4 py-2 border-t border-neutral-100 flex gap-3 text-[10px] text-neutral-400 shrink-0">
-          <span>파일: {current.original_filename}</span>
-          <span>크기: {(current.size_bytes / 1024).toFixed(0)}KB</span>
-          <span>업로더: {current.uploaded_by}</span>
-          <span>{formatDate(current.uploaded_at)}</span>
         </div>
       </div>
     </div>
@@ -811,7 +493,7 @@ export function DrivePage() {
   }
 
   return (
-    <div className="h-full flex flex-col p-5 gap-4 overflow-y-auto">
+    <div className="h-full flex flex-col p-3.5 sm:p-5 gap-3 sm:gap-4 overflow-y-auto">
       {/* 상단 툴바 */}
       <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
         {/* Row 1: 검색창 + 필터 버튼 + 뷰 모드 토글 (우측 고정) */}
@@ -859,53 +541,73 @@ export function DrivePage() {
         </div>
 
         {/* Row 2: 새폴더, 휴지통, 동기화, 업로드, 드라이브 링크 */}
-        <div className="flex items-center gap-2 md:contents">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 md:contents">
           {!showTrash && (
             <button
               onClick={() => setShowNewFolder(true)}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors cursor-pointer"
             >
               <FolderPlus className="w-3.5 h-3.5" />
-              <span>새 폴더</span>
+              <span className="hidden sm:inline">새 폴더</span>
             </button>
           )}
           <button
             onClick={() => setShowTrash(t => !t)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-2 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${
               showTrash
                 ? 'bg-danger-100 text-danger-700'
                 : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
             }`}
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>휴지통</span>
+            <span className="hidden sm:inline">휴지통</span>
           </button>
           {syncStatus?.enabled && syncStatus?.configured && (
             <button
               onClick={handleSync}
               disabled={syncing}
               title="Google Drive와 동기화"
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors disabled:opacity-50 cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors disabled:opacity-50 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-              <span>{syncing ? '동기화 중...' : 'Drive 동기화'}</span>
+              <span className="hidden sm:inline">{syncing ? '동기화 중...' : 'Drive 동기화'}</span>
             </button>
           )}
           {!showTrash && (
             <button
               onClick={() => setShowUpload(true)}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-2 text-xs font-semibold bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>업로드</span>
+              <span className="hidden sm:inline">업로드</span>
             </button>
+          )}
+          {!showTrash && viewMode === 'list' && groupedFiles.some(g => g.subGroups.length > 1) && (
+            <>
+              <button
+                onClick={() => setExpandedGroups(new Set(groupedFiles.filter(g => g.subGroups.length > 1).map(g => g.key)))}
+                title="모두 펼치기"
+                className="flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors cursor-pointer"
+              >
+                <ChevronsDown className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">모두 펼치기</span>
+              </button>
+              <button
+                onClick={() => setExpandedGroups(new Set())}
+                title="모두 접기"
+                className="flex items-center gap-1.5 px-2.5 py-2 sm:px-3 sm:py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors cursor-pointer"
+              >
+                <ChevronsUp className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">모두 접기</span>
+              </button>
+            </>
           )}
           {syncStatus?.enabled && syncStatus?.folder_id && (
             <a
               href={`https://drive.google.com/drive/folders/${syncStatus.folder_id}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 px-2 py-2 text-xs text-neutral-400 hover:text-neutral-600 transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-2 sm:px-3 sm:py-2 text-xs text-neutral-400 hover:text-neutral-600 transition-colors cursor-pointer"
               title="Google Drive 폴더 열기"
             >
               <ExternalLink className="w-3.5 h-3.5" />
@@ -913,133 +615,121 @@ export function DrivePage() {
           )}
         </div>
 
-        {/* Row 3: 펼치기/접기 + 그리드 줌 슬라이더 — 우측 정렬 */}
-        {!showTrash && (groupedFiles.some(g => g.subGroups.length > 1) || viewMode === 'grid') && (
-          <div className="flex items-center gap-2 justify-end md:ml-auto">
-            {groupedFiles.some(g => g.subGroups.length > 1) && (
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setExpandedGroups(new Set(groupedFiles.filter(g => g.subGroups.length > 1).map(g => g.key)))}
-                  className="text-xs text-neutral-500 hover:text-neutral-700 px-2 py-1.5 rounded-lg hover:bg-neutral-100 transition-colors cursor-pointer"
-                >
-                  모두 펼치기
-                </button>
-                <button
-                  onClick={() => setExpandedGroups(new Set())}
-                  className="text-xs text-neutral-500 hover:text-neutral-700 px-2 py-1.5 rounded-lg hover:bg-neutral-100 transition-colors cursor-pointer"
-                >
-                  모두 접기
-                </button>
-              </div>
-            )}
-            {viewMode === 'grid' && (
-              <div className="flex items-center gap-2">
-                <ZoomOut className="w-3.5 h-3.5 text-neutral-400" />
-                <input
-                  type="range" min={80} max={300} step={20} value={gridSize}
-                  onChange={e => setGridSize(Number(e.target.value))}
-                  className="w-24 h-1 accent-primary-500 cursor-pointer"
-                />
-                <ZoomIn className="w-3.5 h-3.5 text-neutral-400" />
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* 검색 필터 패널 */}
       {showFilters && !showTrash && (
-        <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3 flex flex-wrap gap-3 items-end text-xs">
-          <div className="flex flex-col gap-1">
-            <label className="text-neutral-500 font-medium">키 (조)</label>
-            <select
-              value={filterKey}
-              onChange={e => setFilterKey(e.target.value)}
-              className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-800 outline-none"
-            >
-              <option value="">전체</option>
-              {BASE_NOTES.map(k => <option key={k} value={k}>{k}</option>)}
-            </select>
+        <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3 flex flex-col gap-3 text-xs">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-3 items-end">
+            <div className="flex flex-col gap-1 w-full sm:w-auto">
+              <label className="text-neutral-500 font-medium">키 (조)</label>
+              <select
+                value={filterKey}
+                onChange={e => setFilterKey(e.target.value)}
+                className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-800 outline-none w-full sm:w-28"
+              >
+                <option value="">전체</option>
+                {BASE_NOTES.map(k => <option key={k} value={k}>{k}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1 w-full sm:w-auto">
+              <label className="text-neutral-500 font-medium">장/단조</label>
+              <select
+                value={filterMode}
+                onChange={e => setFilterMode(e.target.value)}
+                className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-800 outline-none w-full sm:w-28"
+              >
+                <option value="">전체</option>
+                <option value="major">장조</option>
+                <option value="minor">단조</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1 w-full sm:w-auto">
+              <label className="text-neutral-500 font-medium">형식</label>
+              <select
+                value={filterExt}
+                onChange={e => setFilterExt(e.target.value)}
+                className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-800 outline-none w-full sm:w-28"
+              >
+                <option value="">전체</option>
+                <option value="pdf">PDF</option>
+                <option value="png">PNG</option>
+                <option value="jpg">JPG</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1 w-full sm:w-auto">
+              <label className="text-neutral-500 font-medium">키 등록</label>
+              <select
+                value={filterHasKey}
+                onChange={e => setFilterHasKey(e.target.value as 'all' | 'yes' | 'no')}
+                className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-800 outline-none w-full sm:w-28"
+              >
+                <option value="all">전체</option>
+                <option value="yes">키 있음</option>
+                <option value="no">키 없음</option>
+              </select>
+            </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-neutral-500 font-medium">장/단조</label>
-            <select
-              value={filterMode}
-              onChange={e => setFilterMode(e.target.value)}
-              className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-800 outline-none"
-            >
-              <option value="">전체</option>
-              <option value="major">장조</option>
-              <option value="minor">단조</option>
-            </select>
+          <div className="flex items-center justify-between sm:justify-start gap-4 pt-2 border-t border-neutral-200/60 sm:border-0 sm:pt-0">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={filterEventOnly}
+                onChange={e => setFilterEventOnly(e.target.checked)}
+                className="w-3.5 h-3.5 accent-amber-500"
+              />
+              <span className="text-neutral-700">이벤트 전용만</span>
+            </label>
+            {(filterKey || filterMode || filterExt || filterEventOnly || filterHasKey !== 'all') && (
+              <button
+                onClick={() => { setFilterKey(''); setFilterMode(''); setFilterExt(''); setFilterEventOnly(false); setFilterHasKey('all') }}
+                className="text-xs text-danger-600 hover:text-danger-800 font-medium underline cursor-pointer"
+              >
+                필터 초기화
+              </button>
+            )}
           </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-neutral-500 font-medium">형식</label>
-            <select
-              value={filterExt}
-              onChange={e => setFilterExt(e.target.value)}
-              className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-800 outline-none"
-            >
-              <option value="">전체</option>
-              <option value="pdf">PDF</option>
-              <option value="png">PNG</option>
-              <option value="jpg">JPG</option>
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-neutral-500 font-medium">키 등록</label>
-            <select
-              value={filterHasKey}
-              onChange={e => setFilterHasKey(e.target.value as 'all' | 'yes' | 'no')}
-              className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-800 outline-none"
-            >
-              <option value="all">전체</option>
-              <option value="yes">키 있음</option>
-              <option value="no">키 없음</option>
-            </select>
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer select-none pb-1.5">
-            <input
-              type="checkbox"
-              checked={filterEventOnly}
-              onChange={e => setFilterEventOnly(e.target.checked)}
-              className="w-3.5 h-3.5 accent-amber-500"
-            />
-            <span className="text-neutral-700">이벤트 전용만</span>
-          </label>
-          {(filterKey || filterMode || filterExt || filterEventOnly || filterHasKey !== 'all') && (
-            <button
-              onClick={() => { setFilterKey(''); setFilterMode(''); setFilterExt(''); setFilterEventOnly(false); setFilterHasKey('all') }}
-              className="text-xs text-danger-600 hover:text-danger-800 font-medium underline pb-1.5 cursor-pointer"
-            >
-              필터 초기화
-            </button>
-          )}
         </div>
       )}
 
-      {/* Breadcrumb */}
+      {/* Breadcrumb & Zoom Slider Container */}
       {!showTrash && (
-        <div className="flex items-center gap-1 text-xs text-neutral-500 flex-wrap">
-          {breadcrumb.map((item, idx) => (
-            <span key={idx} className="flex items-center gap-1">
-              {idx > 0 && <ChevronRight className="w-3 h-3 text-neutral-300" />}
-              <button
-                onClick={() => navigateToBreadcrumb(idx)}
-                className={`flex items-center gap-1 hover:text-primary-600 transition-colors cursor-pointer ${
-                  idx === breadcrumb.length - 1 ? 'text-neutral-800 font-semibold' : ''
-                }`}
-              >
-                {idx === 0 && <Home className="w-3 h-3" />}
-                <span>{item.name}</span>
-                {idx === breadcrumb.length - 1 && (folders.length + files.length) > 0 && (
-                  <span className="text-neutral-400 font-normal">
-                    ({folders.length > 0 ? `폴더 ${folders.length} · ` : ''}파일 {files.length})
-                  </span>
-                )}
-              </button>
-            </span>
-          ))}
+        <div className="flex items-center justify-between gap-3 text-xs text-neutral-500 flex-wrap">
+          {/* Breadcrumb Path */}
+          <div className="flex items-center gap-1 flex-wrap">
+            {breadcrumb.map((item, idx) => (
+              <span key={idx} className="flex items-center gap-1">
+                {idx > 0 && <ChevronRight className="w-3 h-3 text-neutral-300" />}
+                <button
+                  onClick={() => navigateToBreadcrumb(idx)}
+                  className={`flex items-center gap-1 hover:text-primary-600 transition-colors cursor-pointer ${
+                    idx === breadcrumb.length - 1 ? 'text-neutral-800 font-semibold' : ''
+                  }`}
+                >
+                  {idx === 0 && <Home className="w-3 h-3" />}
+                  <span>{item.name}</span>
+                  {idx === breadcrumb.length - 1 && (folders.length + files.length) > 0 && (
+                    <span className="text-neutral-400 font-normal">
+                      ({folders.length > 0 ? `폴더 ${folders.length} · ` : ''}파일 {files.length})
+                    </span>
+                  )}
+                </button>
+              </span>
+            ))}
+          </div>
+
+          {/* Grid Zoom Slider (Only in Grid View) */}
+          {viewMode === 'grid' && (
+            <div className="flex items-center gap-1.5 ml-auto sm:ml-0 bg-neutral-100/50 px-2 py-0.5 rounded-lg shrink-0">
+              <ZoomOut className="w-3.5 h-3.5 text-neutral-400" />
+              <input
+                type="range" min={80} max={300} step={20} value={gridSize}
+                onChange={e => setGridSize(Number(e.target.value))}
+                className="w-20 sm:w-24 h-1 accent-primary-500 cursor-pointer"
+              />
+              <ZoomIn className="w-3.5 h-3.5 text-neutral-400" />
+            </div>
+          )}
         </div>
       )}
 
@@ -1113,28 +803,36 @@ export function DrivePage() {
                       </button>
                     ) : <span className="w-3.5 h-3.5 block" />}
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
+                  <td className="px-4 py-3 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
                       {hasMultiple ? (
                         <button
                           onClick={() => toggleGroup(groupKey)}
-                          className="flex items-center gap-2 text-left hover:text-primary-600 transition-colors cursor-pointer group"
+                          className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-2 text-left hover:text-primary-600 transition-colors cursor-pointer group min-w-0 flex-1"
                         >
-                          <FileText className="w-4 h-4 text-neutral-400 shrink-0 group-hover:text-primary-400" />
-                          <span className="text-neutral-800 font-semibold">{rep.display_title.replace(/ (피아노|보컬|드럼|단선|Intro|반주용|피아노\+보컬|보컬\+피아노|피아노\+드럼).*/i, '').trim() || rep.display_title}</span>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="w-4 h-4 text-neutral-400 shrink-0 group-hover:text-primary-400" />
+                            <span className="text-neutral-800 font-semibold truncate">
+                              {rep.display_title.replace(/ (피아노|보컬|드럼|단선|Intro|반주용|피아노\+보컬|보컬\+피아노|피아노\+드럼).*/i, '').trim() || rep.display_title}
+                            </span>
+                          </div>
+                          {rep.subtitle && <span className="text-neutral-400 font-normal text-[11px] sm:text-xs truncate pl-6 sm:pl-0">{rep.subtitle}</span>}
                         </button>
                       ) : (
                         <button
                           onClick={() => openPreview(rep, groupAllFiles)}
-                          className="flex items-center gap-2 text-left hover:text-primary-600 transition-colors cursor-pointer group"
+                          className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-2 text-left hover:text-primary-600 transition-colors cursor-pointer group min-w-0 flex-1"
                         >
-                          <FileText className="w-4 h-4 text-neutral-400 shrink-0 group-hover:text-primary-400" />
-                          <span className="text-neutral-800 font-medium">{rep.display_title}</span>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="w-4 h-4 text-neutral-400 shrink-0 group-hover:text-primary-400" />
+                            <span className="text-neutral-800 font-medium truncate">{rep.display_title}</span>
+                          </div>
+                          {rep.subtitle && <span className="text-neutral-400 font-normal text-[11px] sm:text-xs truncate pl-6 sm:pl-0">{rep.subtitle}</span>}
                         </button>
                       )}
                       {rep.is_event_only && <span className="shrink-0 text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">이벤트</span>}
                       {hasMultiple && (
-                        <span className="text-[10px] text-neutral-400 font-medium">{subGroups.length}종</span>
+                        <span className="text-[10px] text-neutral-400 font-medium shrink-0">{subGroups.length}종</span>
                       )}
                     </div>
                   </td>
@@ -1168,8 +866,8 @@ export function DrivePage() {
                     {!hasMultiple && (
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => openPreview(rep, groupAllFiles)} className="text-neutral-400 hover:text-neutral-600 transition-colors cursor-pointer p-1" title="미리보기"><Eye className="w-3.5 h-3.5" /></button>
-                        <button onClick={() => setEditingFile(rep)} className="text-neutral-400 hover:text-primary-500 transition-colors cursor-pointer p-1" title="수정"><Pencil className="w-3.5 h-3.5" /></button>
-                        <button onClick={() => downloadSheetFile(rep.id)} className="text-neutral-400 hover:text-primary-500 transition-colors cursor-pointer p-1" title="다운로드"><Download className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => setEditingFile(rep)} className="text-neutral-400 hover:text-primary-500 transition-colors cursor-pointer p-1 hidden sm:inline-block" title="수정"><Pencil className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => downloadSheetFile(rep.id)} className="text-neutral-400 hover:text-primary-500 transition-colors cursor-pointer p-1 hidden sm:inline-block" title="다운로드"><Download className="w-3.5 h-3.5" /></button>
                         <button onClick={() => deleteMutation.mutate(rep.id)} className="text-neutral-400 hover:text-danger-500 transition-colors cursor-pointer p-1" title="휴지통으로 이동"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     )}
@@ -1177,15 +875,18 @@ export function DrivePage() {
                 </tr>
                 {/* 펼친 경우: 서브그룹별 최신 버전 1행씩 */}
                 {isExpanded && subGroups.map(sg => (
-                  <tr key={sg.subKey} className="bg-primary-50/30 hover:bg-primary-50/60 transition-colors text-xs">
+                  <tr key={sg.subKey} className="bg-primary-50/30 hover:bg-primary-50/60 transition-colors text-xs border-b border-neutral-50">
                     <td></td>
-                    <td className="px-4 py-2 pl-10">
+                    <td className="px-4 py-2 pl-10 min-w-0">
                       <button
                         onClick={() => openPreview(sg.latest, groupAllFiles)}
-                        className="flex items-center gap-1.5 text-neutral-700 hover:text-primary-600 transition-colors cursor-pointer"
+                        className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-2 text-left hover:text-primary-600 transition-colors cursor-pointer min-w-0 w-full"
                       >
-                        <FileText className="w-3.5 h-3.5 text-neutral-300 shrink-0" />
-                        <span className="truncate">{sg.latest.display_title}</span>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <FileText className="w-3.5 h-3.5 text-neutral-300 shrink-0" />
+                          <span className="truncate text-neutral-700">{sg.latest.display_title}</span>
+                        </div>
+                        {sg.latest.subtitle && <span className="text-neutral-400 font-normal text-[11px] sm:text-xs truncate pl-5 sm:pl-0">{sg.latest.subtitle}</span>}
                       </button>
                     </td>
                     <td className="px-3 py-2 hidden sm:table-cell">
@@ -1207,8 +908,8 @@ export function DrivePage() {
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => openPreview(sg.latest, groupAllFiles)} className="text-neutral-400 hover:text-neutral-600 cursor-pointer p-1" title="미리보기"><Eye className="w-3 h-3" /></button>
-                        <button onClick={() => setEditingFile(sg.latest)} className="text-neutral-400 hover:text-primary-500 cursor-pointer p-1" title="수정"><Pencil className="w-3 h-3" /></button>
-                        <button onClick={() => downloadSheetFile(sg.latest.id)} className="text-neutral-400 hover:text-primary-500 cursor-pointer p-1" title="다운로드"><Download className="w-3 h-3" /></button>
+                        <button onClick={() => setEditingFile(sg.latest)} className="text-neutral-400 hover:text-primary-500 cursor-pointer p-1 hidden sm:inline-block" title="수정"><Pencil className="w-3 h-3" /></button>
+                        <button onClick={() => downloadSheetFile(sg.latest.id)} className="text-neutral-400 hover:text-primary-500 cursor-pointer p-1 hidden sm:inline-block" title="다운로드"><Download className="w-3 h-3" /></button>
                         <button onClick={() => deleteMutation.mutate(sg.latest.id)} className="text-neutral-400 hover:text-danger-500 cursor-pointer p-1" title="휴지통으로 이동"><Trash2 className="w-3 h-3" /></button>
                       </div>
                     </td>
@@ -1248,7 +949,7 @@ export function DrivePage() {
                   <p className="text-[10px] text-neutral-400">{formatDate(folder.created_at)}</p>
                   <button
                     onClick={e => { e.stopPropagation(); deleteFolderMutation.mutate(folder.id) }}
-                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 text-neutral-300 hover:text-danger-500 transition-all cursor-pointer"
+                    className="absolute top-2 right-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-1 text-neutral-300 hover:text-danger-500 transition-all cursor-pointer"
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>
@@ -1293,6 +994,9 @@ export function DrivePage() {
                   {/* 정보 */}
                   <div className="p-3 flex flex-col gap-1.5 flex-1">
                     <p className="text-xs font-semibold text-neutral-800 leading-snug line-clamp-2">{rep.display_title}</p>
+                    {rep.subtitle && (
+                      <p className="text-[10px] text-neutral-400 leading-snug line-clamp-1">{rep.subtitle}</p>
+                    )}
                     {/* 키 배지 목록 */}
                     {keys.some(Boolean) && (
                       <div className="flex flex-wrap gap-1">
