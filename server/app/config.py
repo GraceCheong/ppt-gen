@@ -59,6 +59,7 @@ SUPER_USERS: frozenset[str] = frozenset(
 DATA_DIR: str = os.environ.get("PORR_DATA_DIR", os.path.join(ROOT_DIR, "out"))
 
 SHEET_DRIVE_DIR = os.path.join(DATA_DIR, "sheet_drive", "files")
+SHEET_THUMB_DIR = os.path.join(DATA_DIR, "sheet_drive", "thumbs")
 
 ALLOWED_SHEET_MIME_PREFIXES = ("image/",)
 ALLOWED_SHEET_MIME_EXACT = ("application/pdf",)

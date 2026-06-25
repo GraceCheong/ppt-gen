@@ -288,6 +288,20 @@ def preview_sheet(file_id: str, ctx: AuthContext = Depends(require_user)):
     )
 
 
+@router.get("/{file_id}/thumb")
+def get_sheet_thumb(file_id: str, ctx: AuthContext = Depends(require_user)):
+    thumb_path = sheet_service.get_thumb_path(file_id)
+    if not thumb_path:
+        raise HTTPException(404, detail="썸네일 없음")
+    with open(thumb_path, "rb") as f:
+        data = f.read()
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "max-age=86400"},
+    )
+
+
 @router.patch("/{file_id}")
 async def update_sheet(file_id: str, request: Request, ctx: AuthContext = Depends(require_user)):
     data = await request.json()

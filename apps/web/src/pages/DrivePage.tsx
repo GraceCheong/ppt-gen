@@ -6,7 +6,7 @@ import {
   Search, Upload, FolderPlus, Trash2, Download, Folder, FileText, FileImage,
   RotateCcw, X, ChevronRight, Home, RefreshCw, ExternalLink,
   LayoutList, LayoutGrid, ChevronUp, ChevronDown, ChevronsUpDown,
-  Pencil, Eye, ZoomIn, ZoomOut, ChevronLeft,
+  Pencil, Eye, ZoomIn, ZoomOut, ChevronLeft, SlidersHorizontal,
 } from 'lucide-react'
 import {
   searchSheets, listFolders, listTrash, uploadSheet, deleteSheet,
@@ -20,6 +20,25 @@ import type { SheetFile, SheetFolder, UploadConflict, SyncStatus } from '../api/
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp'])
 function isImageExt(ext: string | null | undefined) { return IMAGE_EXTS.has(ext?.toLowerCase() ?? '') }
 function isPdfExt(ext: string | null | undefined) { return ext?.toLowerCase() === 'pdf' }
+
+function PdfThumb({ fileId, serverUrl }: { fileId: string; serverUrl: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return (
+    <div className="flex flex-col items-center gap-1">
+      <FileText className="w-10 h-10 text-red-300" />
+      <span className="text-[9px] font-bold text-red-300 tracking-widest">PDF</span>
+    </div>
+  )
+  return (
+    <img
+      src={`${serverUrl}/api/sheets/${fileId}/thumb`}
+      alt=""
+      loading="lazy"
+      className="w-full h-full object-contain"
+      onError={() => setFailed(true)}
+    />
+  )
+}
 
 const BASE_NOTES = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
 
@@ -794,39 +813,54 @@ export function DrivePage() {
   return (
     <div className="h-full flex flex-col p-5 gap-4 overflow-y-auto">
       {/* 상단 툴바 */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-2 flex-1 min-w-0 bg-white border border-neutral-200 rounded-xl px-3 py-2">
-          <Search className="w-4 h-4 text-neutral-400 shrink-0" />
-          <input
-            type="text"
-            placeholder="악보 검색..."
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            className="flex-1 text-xs outline-none bg-transparent text-neutral-800 placeholder:text-neutral-400"
-          />
-          {(filterKey || filterMode || filterExt || filterEventOnly || filterHasKey !== 'all') && (
-            <span className="px-1.5 py-0.5 rounded-md bg-primary-100 text-primary-700 text-xs font-semibold">
-              필터 활성
-            </span>
+      <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+        {/* Row 1: 검색창 + 필터 버튼 + 뷰 모드 토글 (우측 고정) */}
+        <div className="flex items-center gap-2 md:flex-1 md:min-w-0">
+          <div className="flex items-center gap-2 flex-1 min-w-0 bg-white border border-neutral-200 rounded-xl px-3 py-2">
+            <Search className="w-4 h-4 text-neutral-400 shrink-0" />
+            <input
+              type="text"
+              placeholder="악보 검색..."
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              className="flex-1 text-xs outline-none bg-transparent text-neutral-800 placeholder:text-neutral-400"
+            />
+            {(filterKey || filterMode || filterExt || filterEventOnly || filterHasKey !== 'all') && (
+              <span className="px-1.5 py-0.5 rounded-md bg-primary-100 text-primary-700 text-xs font-semibold">
+                필터 활성
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => setShowFilters(f => !f)}
+            title="검색 필터"
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${showFilters ? 'bg-primary-100 text-primary-700' : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'}`}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+          </button>
+          {!showTrash && (
+            <div className="flex items-center bg-neutral-100 rounded-xl p-0.5 shrink-0">
+              <button
+                onClick={() => setViewMode('list')}
+                title="목록 뷰"
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${viewMode === 'list' ? 'bg-white shadow-sm text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
+              >
+                <LayoutList className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setViewMode('grid')}
+                title="그리드 뷰"
+                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${viewMode === 'grid' ? 'bg-white shadow-sm text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
         </div>
-        <button
-          onClick={() => setShowFilters(f => !f)}
-          title="검색 필터"
-          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${showFilters ? 'bg-primary-100 text-primary-700' : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'}`}
-        >
-          <Search className="w-3.5 h-3.5" />
-          <span>필터</span>
-        </button>
-        {!showTrash && (
-          <>
-            <button
-              onClick={() => setShowUpload(true)}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors cursor-pointer"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>업로드</span>
-            </button>
+
+        {/* Row 2: 새폴더, 휴지통, 동기화, 업로드, 드라이브 링크 */}
+        <div className="flex items-center gap-2 md:contents">
+          {!showTrash && (
             <button
               onClick={() => setShowNewFolder(true)}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors cursor-pointer"
@@ -834,92 +868,81 @@ export function DrivePage() {
               <FolderPlus className="w-3.5 h-3.5" />
               <span>새 폴더</span>
             </button>
-          </>
-        )}
-        <button
-          onClick={() => setShowTrash(t => !t)}
-          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${
-            showTrash
-              ? 'bg-danger-100 text-danger-700'
-              : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
-          }`}
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          <span>휴지통</span>
-        </button>
-
-        {/* Google Drive 동기화 */}
-        {syncStatus?.enabled && syncStatus?.configured && (
+          )}
           <button
-            onClick={handleSync}
-            disabled={syncing}
-            title="Google Drive와 동기화"
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors disabled:opacity-50 cursor-pointer"
+            onClick={() => setShowTrash(t => !t)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors cursor-pointer ${
+              showTrash
+                ? 'bg-danger-100 text-danger-700'
+                : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+            }`}
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-            <span>{syncing ? '동기화 중...' : 'Drive 동기화'}</span>
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>휴지통</span>
           </button>
-        )}
-        {syncStatus?.enabled && syncStatus?.folder_id && (
-          <a
-            href={`https://drive.google.com/drive/folders/${syncStatus.folder_id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 px-2 py-2 text-xs text-neutral-400 hover:text-neutral-600 transition-colors cursor-pointer"
-            title="Google Drive 폴더 열기"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        )}
+          {syncStatus?.enabled && syncStatus?.configured && (
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              title="Google Drive와 동기화"
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-neutral-100 text-neutral-700 rounded-xl hover:bg-neutral-200 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+              <span>{syncing ? '동기화 중...' : 'Drive 동기화'}</span>
+            </button>
+          )}
+          {!showTrash && (
+            <button
+              onClick={() => setShowUpload(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-colors cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>업로드</span>
+            </button>
+          )}
+          {syncStatus?.enabled && syncStatus?.folder_id && (
+            <a
+              href={`https://drive.google.com/drive/folders/${syncStatus.folder_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 px-2 py-2 text-xs text-neutral-400 hover:text-neutral-600 transition-colors cursor-pointer"
+              title="Google Drive 폴더 열기"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
+        </div>
 
-        {/* 모두 펼치기/접기 */}
-        {!showTrash && groupedFiles.some(g => g.subGroups.length > 1) && (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setExpandedGroups(new Set(groupedFiles.filter(g => g.subGroups.length > 1).map(g => g.key)))}
-              className="text-xs text-neutral-500 hover:text-neutral-700 px-2 py-1.5 rounded-lg hover:bg-neutral-100 transition-colors cursor-pointer"
-            >
-              모두 펼치기
-            </button>
-            <button
-              onClick={() => setExpandedGroups(new Set())}
-              className="text-xs text-neutral-500 hover:text-neutral-700 px-2 py-1.5 rounded-lg hover:bg-neutral-100 transition-colors cursor-pointer"
-            >
-              모두 접기
-            </button>
-          </div>
-        )}
-
-        {/* 그리드 줌 슬라이더 */}
-        {!showTrash && viewMode === 'grid' && (
-          <div className="flex items-center gap-2">
-            <ZoomOut className="w-3.5 h-3.5 text-neutral-400" />
-            <input
-              type="range" min={80} max={300} step={20} value={gridSize}
-              onChange={e => setGridSize(Number(e.target.value))}
-              className="w-24 h-1 accent-primary-500 cursor-pointer"
-            />
-            <ZoomIn className="w-3.5 h-3.5 text-neutral-400" />
-          </div>
-        )}
-
-        {/* 뷰 모드 토글 */}
-        {!showTrash && (
-          <div className="flex items-center bg-neutral-100 rounded-xl p-0.5">
-            <button
-              onClick={() => setViewMode('list')}
-              title="목록 뷰"
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${viewMode === 'list' ? 'bg-white shadow-sm text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
-            >
-              <LayoutList className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setViewMode('grid')}
-              title="그리드 뷰"
-              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${viewMode === 'grid' ? 'bg-white shadow-sm text-neutral-700' : 'text-neutral-400 hover:text-neutral-600'}`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-            </button>
+        {/* Row 3: 펼치기/접기 + 그리드 줌 슬라이더 — 우측 정렬 */}
+        {!showTrash && (groupedFiles.some(g => g.subGroups.length > 1) || viewMode === 'grid') && (
+          <div className="flex items-center gap-2 justify-end md:ml-auto">
+            {groupedFiles.some(g => g.subGroups.length > 1) && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setExpandedGroups(new Set(groupedFiles.filter(g => g.subGroups.length > 1).map(g => g.key)))}
+                  className="text-xs text-neutral-500 hover:text-neutral-700 px-2 py-1.5 rounded-lg hover:bg-neutral-100 transition-colors cursor-pointer"
+                >
+                  모두 펼치기
+                </button>
+                <button
+                  onClick={() => setExpandedGroups(new Set())}
+                  className="text-xs text-neutral-500 hover:text-neutral-700 px-2 py-1.5 rounded-lg hover:bg-neutral-100 transition-colors cursor-pointer"
+                >
+                  모두 접기
+                </button>
+              </div>
+            )}
+            {viewMode === 'grid' && (
+              <div className="flex items-center gap-2">
+                <ZoomOut className="w-3.5 h-3.5 text-neutral-400" />
+                <input
+                  type="range" min={80} max={300} step={20} value={gridSize}
+                  onChange={e => setGridSize(Number(e.target.value))}
+                  className="w-24 h-1 accent-primary-500 cursor-pointer"
+                />
+                <ZoomIn className="w-3.5 h-3.5 text-neutral-400" />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1256,10 +1279,7 @@ export function DrivePage() {
                     {isImg ? (
                       <img src={imgSrc} alt={rep.display_title} loading="lazy" className="w-full h-full object-contain" />
                     ) : isPdfFile ? (
-                      <div className="flex flex-col items-center gap-1">
-                        <FileText className="w-10 h-10 text-red-300" />
-                        <span className="text-[9px] font-bold text-red-300 tracking-widest">PDF</span>
-                      </div>
+                      <PdfThumb fileId={rep.id} serverUrl={serverUrl} />
                     ) : (
                       <FileImage className="w-10 h-10 text-neutral-300" />
                     )}

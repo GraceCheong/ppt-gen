@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from server.app.config import SHEET_DRIVE_DIR, SUPER_USERS
+from server.app.config import SHEET_DRIVE_DIR, SHEET_THUMB_DIR, SUPER_USERS
 from server.app.services.db import history_db_path
 
 
@@ -18,6 +18,24 @@ from server.app.services.db import history_db_path
 
 def is_super(user_id: str) -> bool:
     return user_id in SUPER_USERS
+
+
+def _generate_pdf_thumb(file_id: str, storage_path: str) -> None:
+    try:
+        import fitz  # pymupdf
+        os.makedirs(SHEET_THUMB_DIR, exist_ok=True)
+        doc = fitz.open(storage_path)
+        page = doc[0]
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+        pix.save(os.path.join(SHEET_THUMB_DIR, f"{file_id}.jpg"))
+        doc.close()
+    except Exception:
+        pass
+
+
+def get_thumb_path(file_id: str) -> str | None:
+    path = os.path.join(SHEET_THUMB_DIR, f"{file_id}.jpg")
+    return path if os.path.exists(path) else None
 
 
 def format_key(key_root: str, key_mode: str) -> str:
@@ -251,6 +269,15 @@ def upload_sheet(
             "SELECT * FROM sheet_files WHERE id=?", (file_id,)
         ).fetchone()
         result = dict(row)
+
+    # PDF 썸네일 생성 (비동기 — 실패해도 업로드 결과는 반환)
+    if ext.lower() == "pdf":
+        import threading
+        threading.Thread(
+            target=_generate_pdf_thumb,
+            args=(file_id, storage_path),
+            daemon=True,
+        ).start()
 
     # Drive 동기화 (비동기 fire-and-forget — 실패해도 업로드 결과는 반환)
     from server.app.config import GDRIVE_SYNC_ENABLED
