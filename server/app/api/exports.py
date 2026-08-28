@@ -210,10 +210,7 @@ async def generate_ppt(
     except (TypeError, ValueError):
         raise HTTPException(400, detail="max_lines_per_slide는 숫자여야 합니다.")
 
-    try:
-        max_chars_per_line = int(data.get("max_chars_per_line") or 18)
-    except (TypeError, ValueError):
-        raise HTTPException(400, detail="max_chars_per_line은 숫자여야 합니다.")
+    max_chars_per_line = 9999
 
     raw_font_size = data.get("lyrics_font_size")
     try:
@@ -387,9 +384,9 @@ async def api_export_pptx(
     settings = data.get("settings") or {}
     try:
         max_lines_per_slide = int(settings.get("max_lines_per_slide") or 2)
-        max_chars_per_line = int(settings.get("max_chars_per_line") or 18)
     except (TypeError, ValueError) as e:
         raise HTTPException(400, detail=f"settings 값이 올바르지 않습니다: {e}")
+    max_chars_per_line = 9999
 
     raw_font_size = settings.get("lyrics_font_size")
     try:

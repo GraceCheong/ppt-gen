@@ -1,10 +1,7 @@
 import re
 from copy import deepcopy
 
-from pptx.dml.color import RGBColor
 from pptx.util import Pt
-
-_REPEAT_COLOR = RGBColor(0x8B, 0x1A, 0x1A)  # 어두운 붉은색
 
 _NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 _MIN_SHORT_LINE_LEN = 6
@@ -19,7 +16,7 @@ def parse_lyrics_text(raw_text):
         if not lines:
             continue
 
-        part_key = lines[0].strip()
+        part_key = lines[0].strip().lower()
         if not part_key:
             continue
         lyrics_content = '\n'.join(line.strip() for line in lines[1:])
@@ -51,7 +48,7 @@ def chunk_text(text, max_lines=2):
     return chunks
 
 
-def wrap_text_by_max_chars(text, max_chars_per_line=18):
+def wrap_text_by_max_chars(text, max_chars_per_line=9999):
     if not text:
         return ""
 
@@ -117,30 +114,8 @@ def _read_layout_ph_fmt(shape):
     return None, None, None
 
 
-def _patch_rPr_repeat(rPr_elem):
-    """볼드 + 어두운 붉은색을 lxml 레벨에서 직접 rPr 요소에 적용한다.
-    python-pptx 고수준 API 대신 etree 직접 조작 — deepcopy 요소에도 안전하게 작동."""
-    from lxml import etree
-    rPr_elem.set('b', '1')
-    # 기존 fill 요소 제거
-    for tag in (f'{{{_NS}}}solidFill', f'{{{_NS}}}gradFill',
-                f'{{{_NS}}}noFill',    f'{{{_NS}}}pattFill', f'{{{_NS}}}grpFill'):
-        for child in list(rPr_elem.findall(tag)):
-            rPr_elem.remove(child)
-    # solidFill 삽입 (a:ln 다음, 없으면 맨 앞 — OOXML 스키마 순서 준수)
-    solid = etree.Element(f'{{{_NS}}}solidFill')
-    srgb  = etree.SubElement(solid, f'{{{_NS}}}srgbClr')
-    srgb.set('val', '8B1A1A')
-    ln_elem = rPr_elem.find(f'{{{_NS}}}ln')
-    if ln_elem is not None:
-        rPr_elem.insert(list(rPr_elem).index(ln_elem) + 1, solid)
-    else:
-        rPr_elem.insert(0, solid)
-
-
-def set_editable_text(shape, text, font_size=None, repeat_style=False):
-    """Set text while preserving the layout placeholder's font/paragraph formatting.
-    repeat_style=True 이면 볼드 + 어두운 붉은색을 lxml 레벨로 직접 적용한다."""
+def set_editable_text(shape, text, font_size=None):
+    """Set text while preserving the layout placeholder's font/paragraph formatting."""
     from lxml import etree as _etree
     tf = shape.text_frame
     txBody = tf._txBody
@@ -180,8 +155,6 @@ def set_editable_text(shape, text, font_size=None, repeat_style=False):
             new_rPr = deepcopy(saved_rPr)
             if font_size:
                 new_rPr.set('sz', str(int(font_size * 100)))
-            if repeat_style:
-                _patch_rPr_repeat(new_rPr)
             r_elm.insert(0, new_rPr)
         else:
             # saved_rPr 없음: auto-generated rPr 재사용
@@ -193,8 +166,6 @@ def set_editable_text(shape, text, font_size=None, repeat_style=False):
                 r_elm.insert(0, new_rPr)
             if font_size:
                 new_rPr.set('sz', str(int(font_size * 100)))
-            if repeat_style:
-                _patch_rPr_repeat(new_rPr)
 
 
 def delete_all_slides(prs):
@@ -270,7 +241,7 @@ def append_lyrics_to_ppt(
     lyrics_text,
     sequence_str,
     max_lines_per_slide=2,
-    max_chars_per_line=18,
+    max_chars_per_line=9999,
     lyrics_font_size=None,
 ):
     lyrics_dict = parse_lyrics_text(lyrics_text)
@@ -296,34 +267,19 @@ def append_lyrics_to_ppt(
             set_editable_text(shape, song_title)
             break
 
-    # 맨 마지막 연속 반복 그룹만 감지 (중간 중복은 해당 없음)
-    # 예) I-V1-V1-C-B-C-C → 마지막 C-C 그룹: start=8, skip={9}
-    last_repeat_start = None
-    skip_indices: set[int] = set()
-    if len(sequence_list) >= 2 and sequence_list[-1] == sequence_list[-2]:
-        trail = sequence_list[-1]
-        start = len(sequence_list) - 1
-        while start > 0 and sequence_list[start - 1] == trail:
-            start -= 1
-        last_repeat_start = start
-        skip_indices = set(range(start + 1, len(sequence_list)))
-
     for idx, part in enumerate(sequence_list):
-        if idx in skip_indices:
-            continue  # 마지막 연속 반복의 두 번째~는 슬라이드 생성 생략
+        part_lower = part.lower()
+        base_part_lower = get_base_key(part_lower)
 
-        base_part = get_base_key(part)
-        mark_repeat = (last_repeat_start is not None and idx == last_repeat_start)
-
-        if part in lyrics_dict:
-            display_text = lyrics_dict[part]
-        elif base_part in lyrics_dict:
-            display_text = lyrics_dict[base_part]
+        if part_lower in lyrics_dict:
+            display_text = lyrics_dict[part_lower]
+        elif base_part_lower in lyrics_dict:
+            display_text = lyrics_dict[base_part_lower]
         else:
             if part.startswith('(') and part.endswith(')'):
                 display_text = part[1:-1].strip()
             else:
-                if idx == 0 and base_part.upper() in ["I", "INTRO"]:
+                if idx == 0 and base_part_lower in ("i", "intro"):
                     continue
                 display_text = "-"
 
@@ -342,9 +298,7 @@ def append_lyrics_to_ppt(
             song_title_placeholder = placeholders[1] if len(placeholders) > 1 else None
 
             if lyrics_placeholder is not None:
-                set_editable_text(lyrics_placeholder, chunk,
-                                  font_size=lyrics_font_size,
-                                  repeat_style=mark_repeat)
+                set_editable_text(lyrics_placeholder, chunk, font_size=lyrics_font_size)
 
             if song_title_placeholder is not None:
                 set_editable_text(song_title_placeholder, song_title)

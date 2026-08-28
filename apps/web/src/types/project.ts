@@ -62,12 +62,10 @@ export function getLyricsSectionStatus(
 
 export interface PptSettings {
   maxLinesPerSlide: number
-  maxCharsPerLine: number
   lyricsFontSize: number | null
 }
 
 export const DEFAULT_SETTINGS: PptSettings = {
   maxLinesPerSlide: 2,
-  maxCharsPerLine: 18,
   lyricsFontSize: null,
 }

@@ -25,7 +25,7 @@ def build_integrated_pptx(
     lyrics_by_title,
     output_pptx_path,
     max_lines_per_slide=2,
-    max_chars_per_line=18,
+    max_chars_per_line=9999,
     lyrics_font_size=None,
 ):
     prs = Presentation(template_path)
@@ -165,7 +165,7 @@ def build_integrated_pptx_with_local_office(
     lyrics_by_title,
     output_pptx_path,
     max_lines_per_slide=2,
-    max_chars_per_line=18,
+    max_chars_per_line=9999,
     lyrics_font_size=None,
 ):
     """Build a PPTX locally and finalize it with PowerPoint COM, then LibreOffice if needed."""

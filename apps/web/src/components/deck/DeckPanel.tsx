@@ -30,9 +30,7 @@ export function DeckPanel() {
   const queryClient = useQueryClient()
 
   const [linesStr, setLinesStr] = useState(() => String(settings.maxLinesPerSlide))
-  const [charsStr, setCharsStr] = useState(() => String(settings.maxCharsPerLine))
   useEffect(() => { setLinesStr(String(settings.maxLinesPerSlide)) }, [settings.maxLinesPerSlide])
-  useEffect(() => { setCharsStr(String(settings.maxCharsPerLine)) }, [settings.maxCharsPerLine])
 
   const [showManageModal, setShowManageModal] = useState(false)
   const [pptJobId, setPptJobId] = useState<string | null>(null)
@@ -102,7 +100,7 @@ export function DeckPanel() {
           <Sliders className="w-3.5 h-3.5 text-neutral-400" />
           <span>슬라이드 설정</span>
         </div>
-        <div className="bg-neutral-50/50 border border-neutral-200/50 rounded-xl p-3 flex flex-col gap-3.5">
+        <div className="bg-neutral-50/50 border border-neutral-200/50 rounded-xl p-3">
           <label className="flex items-center justify-between text-xs font-medium text-neutral-600">
             <span>슬라이드당 최대 줄 수</span>
             <input
@@ -117,23 +115,6 @@ export function DeckPanel() {
                 const clamped = isNaN(v) ? 4 : Math.max(1, Math.min(10, v))
                 setLinesStr(String(clamped))
                 updateSettings({ maxLinesPerSlide: clamped })
-              }}
-            />
-          </label>
-          <label className="flex items-center justify-between text-xs font-medium text-neutral-600">
-            <span>한 줄 최대 글자 수</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              className="w-14 border border-neutral-200 bg-white rounded-lg px-2 py-1 text-xs outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all text-center font-bold text-neutral-800"
-              value={charsStr}
-              onFocus={e => e.target.select()}
-              onChange={e => setCharsStr(e.target.value)}
-              onBlur={() => {
-                const v = parseInt(charsStr, 10)
-                const clamped = isNaN(v) ? 18 : Math.max(5, Math.min(50, v))
-                setCharsStr(String(clamped))
-                updateSettings({ maxCharsPerLine: clamped })
               }}
             />
           </label>

@@ -6,6 +6,7 @@ import {
   fetchHistory,
   saveHistoryEntry,
   updateHistoryEntry,
+  updateHistoryRoles,
   type WeeklyHistoryItem,
   type ManualEntry,
 } from '../api/history'
@@ -239,6 +240,287 @@ function HistoryEntryModal({ existing, onClose, onSaved }: HistoryEntryModalProp
   )
 }
 
+// ── 일정 추가 모달 ────────────────────────────────────────────────────────────
+
+interface ScheduleRow {
+  date: string
+  worshipLeader: string
+  accompanist: string
+  prayerPerson: string
+}
+
+function nextSaturdays(n: number): string[] {
+  const result: string[] = []
+  const d = new Date()
+  const diff = (6 - d.getDay() + 7) % 7 || 7
+  d.setDate(d.getDate() + diff)
+  for (let i = 0; i < n; i++) {
+    result.push(toLocalDateStr(new Date(d)))
+    d.setDate(d.getDate() + 7)
+  }
+  return result
+}
+
+function emptyRow(date: string): ScheduleRow {
+  return { date, worshipLeader: '', accompanist: '', prayerPerson: '' }
+}
+
+interface ConflictEntry {
+  newRow: ScheduleRow
+  existing: WeeklyHistoryItem
+  choice: 'keep' | 'replace'
+}
+
+function ScheduleAddModal({
+  existingData,
+  onClose,
+  onSaved,
+}: {
+  existingData: WeeklyHistoryItem[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [rows, setRows] = useState<ScheduleRow[]>(() =>
+    nextSaturdays(4).map(emptyRow)
+  )
+  const [conflicts, setConflicts] = useState<ConflictEntry[] | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function addRow() {
+    const last = rows[rows.length - 1]?.date
+    let next = ''
+    if (last) {
+      const d = new Date(last + 'T00:00:00')
+      d.setDate(d.getDate() + 7)
+      next = toLocalDateStr(d)
+    }
+    setRows(p => [...p, emptyRow(next)])
+  }
+
+  function removeRow(i: number) { setRows(p => p.filter((_, idx) => idx !== i)) }
+
+  function updateRow(i: number, field: keyof ScheduleRow, val: string) {
+    setRows(p => p.map((r, idx) => idx === i ? { ...r, [field]: val } : r))
+  }
+
+  function handleCheckConflicts() {
+    const valid = rows.filter(r => r.date)
+    if (!valid.length) { setError('날짜를 하나 이상 입력하세요.'); return }
+    setError(null)
+
+    const found: ConflictEntry[] = valid.reduce<ConflictEntry[]>((acc, r) => {
+      const ex = existingData.find(d => d.week_end_date === r.date)
+      if (ex && (ex.worship_leader || ex.accompanist || ex.prayer_person)) {
+        acc.push({ newRow: r, existing: ex, choice: 'keep' })
+      }
+      return acc
+    }, [])
+
+    if (found.length > 0) {
+      setConflicts(found)
+    } else {
+      doSave(valid, [])
+    }
+  }
+
+  async function doSave(valid: ScheduleRow[], resolvedConflicts: ConflictEntry[]) {
+    const skipDates = new Set(
+      resolvedConflicts.filter(c => c.choice === 'keep').map(c => c.newRow.date)
+    )
+    const toSave = valid.filter(r => !skipDates.has(r.date))
+
+    setSaving(true); setError(null)
+    try {
+      await Promise.all(toSave.map(r =>
+        updateHistoryRoles(r.date, {
+          worship_leader: r.worshipLeader.trim(),
+          accompanist: r.accompanist.trim(),
+          prayer_person: r.prayerPerson.trim(),
+          event: '',
+        })
+      ))
+      onSaved(); onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '저장 실패')
+      setSaving(false)
+    }
+  }
+
+  function handleConflictConfirm() {
+    const valid = rows.filter(r => r.date)
+    doSave(valid, conflicts!)
+  }
+
+  function setConflictChoice(date: string, choice: 'keep' | 'replace') {
+    setConflicts(prev => prev!.map(c =>
+      c.newRow.date === date ? { ...c, choice } : c
+    ))
+  }
+
+  const isConflictStage = conflicts !== null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/40 backdrop-blur-xs px-4" onClick={onClose}>
+      <div
+        className="bg-white border border-neutral-200/80 rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh] overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* 헤더 */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b border-neutral-100 bg-neutral-50/20">
+          <div>
+            <h2 className="text-sm font-bold text-neutral-900">
+              {isConflictStage ? '일정 충돌 확인' : '일정 추가'}
+            </h2>
+            <p className="text-[10px] text-neutral-400 mt-0.5">
+              {isConflictStage
+                ? '이미 저장된 일정과 겹칩니다. 각 날짜별로 유지할 일정을 선택하세요.'
+                : '날짜와 담당자를 입력하고 한꺼번에 저장합니다.'}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded-lg p-1.5 transition-colors cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-6 py-4">
+          {!isConflictStage ? (
+            <>
+              <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 mb-2 px-1">
+                {['날짜', '인도자', '반주자', '기도자', ''].map((h, i) => (
+                  <span key={i} className="text-[10px] font-bold text-neutral-400">{h}</span>
+                ))}
+              </div>
+              <div className="flex flex-col gap-2">
+                {rows.map((row, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 items-center">
+                    <input
+                      type="date"
+                      value={row.date}
+                      onChange={e => updateRow(i, 'date', e.target.value)}
+                      className="border border-neutral-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all text-neutral-800"
+                    />
+                    {(['worshipLeader', 'accompanist', 'prayerPerson'] as const).map(field => (
+                      <input
+                        key={field}
+                        type="text"
+                        value={row[field]}
+                        placeholder="—"
+                        onChange={e => updateRow(i, field, e.target.value)}
+                        className="border border-neutral-200 rounded-lg px-2.5 py-1.5 text-xs outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all text-neutral-700"
+                      />
+                    ))}
+                    <button onClick={() => removeRow(i)} className="text-neutral-300 hover:text-danger-500 p-1 rounded hover:bg-neutral-100 shrink-0 cursor-pointer transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={addRow}
+                className="mt-3 text-xs font-semibold text-primary-500 hover:text-primary-600 flex items-center gap-1 cursor-pointer select-none py-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>행 추가</span>
+              </button>
+            </>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {conflicts.map(c => (
+                <div
+                  key={c.newRow.date}
+                  className="border border-neutral-200/80 rounded-xl overflow-hidden"
+                >
+                  <div className="px-4 py-2.5 bg-neutral-50 border-b border-neutral-100">
+                    <span className="text-xs font-bold text-neutral-800">{formatWeekLabel(c.newRow.date)}</span>
+                  </div>
+                  <div className="grid grid-cols-2 divide-x divide-neutral-100">
+                    {/* 기존 */}
+                    <button
+                      onClick={() => setConflictChoice(c.newRow.date, 'keep')}
+                      className={`p-4 text-left transition-colors cursor-pointer ${c.choice === 'keep' ? 'bg-primary-50' : 'bg-white hover:bg-neutral-50'}`}
+                    >
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${c.choice === 'keep' ? 'border-primary-500 bg-primary-500' : 'border-neutral-300'}`}>
+                          {c.choice === 'keep' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                        <span className={`text-[10px] font-bold ${c.choice === 'keep' ? 'text-primary-600' : 'text-neutral-400'}`}>기존 유지</span>
+                      </div>
+                      <RolesDisplay leader={c.existing.worship_leader} accompanist={c.existing.accompanist} prayer={c.existing.prayer_person} />
+                    </button>
+                    {/* 신규 */}
+                    <button
+                      onClick={() => setConflictChoice(c.newRow.date, 'replace')}
+                      className={`p-4 text-left transition-colors cursor-pointer ${c.choice === 'replace' ? 'bg-primary-50' : 'bg-white hover:bg-neutral-50'}`}
+                    >
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${c.choice === 'replace' ? 'border-primary-500 bg-primary-500' : 'border-neutral-300'}`}>
+                          {c.choice === 'replace' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                        <span className={`text-[10px] font-bold ${c.choice === 'replace' ? 'text-primary-600' : 'text-neutral-400'}`}>새 일정으로 교체</span>
+                      </div>
+                      <RolesDisplay leader={c.newRow.worshipLeader} accompanist={c.newRow.accompanist} prayer={c.newRow.prayerPerson} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {error && <p className="mt-2 text-xs text-danger-500 font-medium">{error}</p>}
+        </div>
+
+        <div className="px-6 pb-5 pt-3 border-t border-neutral-100 flex gap-2 justify-end">
+          {isConflictStage ? (
+            <>
+              <button
+                onClick={() => setConflicts(null)}
+                className="text-xs font-semibold border border-neutral-200 text-neutral-700 rounded-xl px-4 py-2.5 hover:bg-neutral-50 cursor-pointer"
+              >
+                돌아가기
+              </button>
+              <button
+                onClick={handleConflictConfirm}
+                disabled={saving}
+                className="text-xs font-bold bg-primary-600 text-white rounded-xl px-4 py-2.5 hover:bg-primary-700 active:bg-primary-800 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {saving ? '저장 중...' : '확인 후 저장'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={onClose} className="text-xs font-semibold border border-neutral-200 text-neutral-700 rounded-xl px-4 py-2.5 hover:bg-neutral-50 cursor-pointer">취소</button>
+              <button
+                onClick={handleCheckConflicts}
+                disabled={saving}
+                className="text-xs font-bold bg-primary-600 text-white rounded-xl px-4 py-2.5 hover:bg-primary-700 active:bg-primary-800 transition-all cursor-pointer disabled:opacity-50"
+              >
+                일정 저장
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RolesDisplay({ leader, accompanist, prayer }: { leader: string; accompanist: string; prayer: string }) {
+  const empty = !leader && !accompanist && !prayer
+  if (empty) return <p className="text-[10px] text-neutral-300 font-medium">담당자 없음</p>
+  return (
+    <div className="flex flex-col gap-0.5">
+      {[['인도', leader], ['반주', accompanist], ['기도', prayer]].map(([label, val]) =>
+        val ? (
+          <p key={label} className="text-[10px] text-neutral-600">
+            <span className="text-neutral-400 font-bold">{label} </span>{val}
+          </p>
+        ) : null
+      )}
+    </div>
+  )
+}
+
 // ── 목록 뷰 카드 ─────────────────────────────────────────────────────────────
 
 function WeekCard({
@@ -333,6 +615,7 @@ export function HistoryPage() {
   const { mode: authMode } = useAuthStore()
   const queryClient = useQueryClient()
   const [showAdd, setShowAdd] = useState(false)
+  const [showAddSchedule, setShowAddSchedule] = useState(false)
   const [editingItem, setEditingItem] = useState<WeeklyHistoryItem | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('calendar')
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc')
@@ -402,6 +685,13 @@ export function HistoryPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddSchedule(true)}
+            className="shrink-0 text-xs font-bold border border-neutral-200 text-neutral-700 bg-white hover:bg-neutral-50 rounded-xl px-4 py-2 cursor-pointer transition-all flex items-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">일정 추가</span>
+          </button>
           <button
             onClick={() => setShowAdd(true)}
             title={TIPS.history.add}
@@ -489,6 +779,14 @@ export function HistoryPage() {
             </div>
           )}
         </div>
+      )}
+
+      {showAddSchedule && (
+        <ScheduleAddModal
+          existingData={data}
+          onClose={() => setShowAddSchedule(false)}
+          onSaved={handleSaved}
+        />
       )}
 
       {showAdd && (

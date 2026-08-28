@@ -7,7 +7,6 @@ export interface WeeklyHistoryItem {
   sequence_entries: { title: string; sequence: string }[]
   lyrics_by_title: Record<string, string>
   max_lines_per_slide: number
-  max_chars_per_line: number
   lyrics_font_size: string | null
   worship_leader: string
   accompanist: string

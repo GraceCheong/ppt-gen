@@ -26,7 +26,6 @@ export async function createPptxJob(
     })),
     settings: {
       max_lines_per_slide: settings.maxLinesPerSlide,
-      max_chars_per_line: settings.maxCharsPerLine,
       lyrics_font_size: settings.lyricsFontSize,
     },
   }
