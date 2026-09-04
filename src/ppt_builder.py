@@ -30,6 +30,7 @@ def _character_properties_from_text_body(tx_body):
     resolve that inheritance when new text is inserted, so inspect those
     locations explicitly.
     """
+    candidates = []
     paragraphs = tx_body.findall(_a('p'))
     if paragraphs:
         paragraph = paragraphs[0]
@@ -37,25 +38,43 @@ def _character_properties_from_text_body(tx_body):
         if run is not None:
             run_props = run.find(_a('rPr'))
             if run_props is not None:
-                return _as_run_properties(run_props)
+                candidates.append(run_props)
 
         end_props = paragraph.find(_a('endParaRPr'))
         if end_props is not None:
-            return _as_run_properties(end_props)
+            candidates.append(end_props)
 
         paragraph_props = paragraph.find(_a('pPr'))
         if paragraph_props is not None:
             default_props = paragraph_props.find(_a('defRPr'))
             if default_props is not None:
-                return _as_run_properties(default_props)
+                candidates.append(default_props)
 
     list_style = tx_body.find(_a('lstStyle'))
     if list_style is not None:
         for level in list_style:
             default_props = level.find(_a('defRPr'))
             if default_props is not None:
-                return _as_run_properties(default_props)
-    return None
+                candidates.append(default_props)
+
+    if not candidates:
+        return None
+
+    # Candidates are ordered most-specific to least-specific. Start with the
+    # most-specific element, then fill only missing values from inherited
+    # levels. A common PowerPoint pattern is language in endParaRPr and the
+    # actual Korean font in lstStyle/defRPr.
+    merged = _as_run_properties(candidates[0])
+    for fallback in candidates[1:]:
+        for name, value in fallback.attrib.items():
+            if name not in merged.attrib:
+                merged.set(name, value)
+        existing_tags = {child.tag for child in merged}
+        for child in fallback:
+            if child.tag not in existing_tags:
+                merged.append(deepcopy(child))
+                existing_tags.add(child.tag)
+    return merged
 
 
 def _theme_font_variant(typeface, script):
