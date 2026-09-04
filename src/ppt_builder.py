@@ -1,10 +1,129 @@
 import re
 from copy import deepcopy
 
+from lxml import etree
+from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.util import Pt
 
 _NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 _MIN_SHORT_LINE_LEN = 6
+
+
+def _a(tag):
+    return f'{{{_NS}}}{tag}'
+
+
+def _as_run_properties(element):
+    """Clone DrawingML character properties so they can be used as ``a:rPr``."""
+    if element is None:
+        return None
+    cloned = deepcopy(element)
+    cloned.tag = _a('rPr')
+    return cloned
+
+
+def _character_properties_from_text_body(tx_body):
+    """Return the most specific character properties stored in a text body.
+
+    PowerPoint commonly stores placeholder fonts in ``endParaRPr`` or
+    ``lstStyle/lvlXpPr/defRPr`` rather than in a run. python-pptx does not
+    resolve that inheritance when new text is inserted, so inspect those
+    locations explicitly.
+    """
+    paragraphs = tx_body.findall(_a('p'))
+    if paragraphs:
+        paragraph = paragraphs[0]
+        run = paragraph.find(_a('r'))
+        if run is not None:
+            run_props = run.find(_a('rPr'))
+            if run_props is not None:
+                return _as_run_properties(run_props)
+
+        end_props = paragraph.find(_a('endParaRPr'))
+        if end_props is not None:
+            return _as_run_properties(end_props)
+
+        paragraph_props = paragraph.find(_a('pPr'))
+        if paragraph_props is not None:
+            default_props = paragraph_props.find(_a('defRPr'))
+            if default_props is not None:
+                return _as_run_properties(default_props)
+
+    list_style = tx_body.find(_a('lstStyle'))
+    if list_style is not None:
+        for level in list_style:
+            default_props = level.find(_a('defRPr'))
+            if default_props is not None:
+                return _as_run_properties(default_props)
+    return None
+
+
+def _theme_font_variant(typeface, script):
+    if typeface == '+mj-lt':
+        return f'+mj-{script}'
+    if typeface == '+mn-lt':
+        return f'+mn-{script}'
+    return typeface
+
+
+def _ensure_script_fonts(run_props):
+    """Give Latin, Korean/East-Asian and complex text explicit font entries."""
+    font_elements = {
+        tag: run_props.find(_a(tag)) for tag in ('latin', 'ea', 'cs')
+    }
+    source = next(
+        (
+            element.get('typeface')
+            for element in font_elements.values()
+            if element is not None and element.get('typeface')
+        ),
+        None,
+    )
+    if not source:
+        return run_props
+
+    for tag, script in (('latin', 'lt'), ('ea', 'ea'), ('cs', 'cs')):
+        element = font_elements[tag]
+        if element is None:
+            element = etree.SubElement(run_props, _a(tag))
+        if not element.get('typeface'):
+            element.set('typeface', _theme_font_variant(source, script))
+    return run_props
+
+
+def _default_theme_run_properties(placeholder_type):
+    """Create explicit theme references when a placeholder has no local rPr."""
+    title_types = {
+        PP_PLACEHOLDER.TITLE,
+        PP_PLACEHOLDER.CENTER_TITLE,
+        PP_PLACEHOLDER.VERTICAL_TITLE,
+    }
+    family = 'mj' if placeholder_type in title_types else 'mn'
+    run_props = etree.Element(_a('rPr'))
+    run_props.set('lang', 'ko-KR')
+    run_props.set('dirty', '0')
+    for tag, script in (('latin', 'lt'), ('ea', 'ea'), ('cs', 'cs')):
+        font = etree.SubElement(run_props, _a(tag))
+        font.set('typeface', f'+{family}-{script}')
+    return run_props
+
+
+def _master_character_properties(layout, layout_placeholder):
+    """Find character properties inherited from the corresponding master placeholder."""
+    try:
+        placeholder_type = layout_placeholder.placeholder_format.type
+        candidates = [
+            placeholder
+            for placeholder in layout.slide_master.placeholders
+            if placeholder.placeholder_format.type == placeholder_type
+        ]
+        for placeholder in candidates:
+            props = _character_properties_from_text_body(placeholder.text_frame._txBody)
+            if props is not None:
+                return props
+    except Exception:
+        pass
+    return None
 
 
 def parse_lyrics_text(raw_text):
@@ -93,21 +212,20 @@ def _read_layout_ph_fmt(shape):
             txb = lph.text_frame._txBody
             saved_lstStyle = None
             saved_pPr = None
-            saved_rPr = None
-            lst = txb.find(f'{{{_NS}}}lstStyle')
+            saved_rPr = _character_properties_from_text_body(txb)
+            lst = txb.find(_a('lstStyle'))
             if lst is not None and len(lst):
                 saved_lstStyle = deepcopy(lst)
             ps = txb.findall(f'{{{_NS}}}p')
             if ps:
                 p0 = ps[0]
-                pPr = p0.find(f'{{{_NS}}}pPr')
+                pPr = p0.find(_a('pPr'))
                 if pPr is not None:
                     saved_pPr = deepcopy(pPr)
-                r0 = p0.find(f'{{{_NS}}}r')
-                if r0 is not None:
-                    rPr = r0.find(f'{{{_NS}}}rPr')
-                    if rPr is not None:
-                        saved_rPr = deepcopy(rPr)
+            if saved_rPr is None:
+                saved_rPr = _master_character_properties(layout, lph)
+            if saved_rPr is None:
+                saved_rPr = _default_theme_run_properties(lph.placeholder_format.type)
             return saved_lstStyle, saved_pPr, saved_rPr
     except Exception:
         pass
@@ -152,7 +270,7 @@ def set_editable_text(shape, text, font_size=None):
             existing_rPr = r_elm.find(f'{{{_NS}}}rPr')
             if existing_rPr is not None:
                 r_elm.remove(existing_rPr)
-            new_rPr = deepcopy(saved_rPr)
+            new_rPr = _ensure_script_fonts(deepcopy(saved_rPr))
             if font_size:
                 new_rPr.set('sz', str(int(font_size * 100)))
             r_elm.insert(0, new_rPr)
@@ -166,6 +284,15 @@ def set_editable_text(shape, text, font_size=None):
                 r_elm.insert(0, new_rPr)
             if font_size:
                 new_rPr.set('sz', str(int(font_size * 100)))
+
+        # New typing at the end of a paragraph inherits endParaRPr. Keep it
+        # aligned with the run so PowerPoint does not switch fonts after save.
+        existing_end_props = p_elm.find(_a('endParaRPr'))
+        if existing_end_props is not None:
+            p_elm.remove(existing_end_props)
+        end_props = deepcopy(new_rPr)
+        end_props.tag = _a('endParaRPr')
+        p_elm.append(end_props)
 
 
 def delete_all_slides(prs):
