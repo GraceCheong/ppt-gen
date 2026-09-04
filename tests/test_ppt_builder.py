@@ -3,13 +3,113 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
+from lxml import etree
+from pptx.enum.shapes import PP_PLACEHOLDER
 from ppt_builder import (
+    _character_properties_from_text_body,
+    _default_theme_run_properties,
+    _ensure_script_fonts,
     parse_lyrics_text,
     chunk_text,
     wrap_text_by_max_chars,
     parse_sequence_text,
     get_base_key,
 )
+
+
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+
+def a(tag):
+    return f"{{{A_NS}}}{tag}"
+
+
+class TestFontPreservation:
+    def test_reads_font_from_end_paragraph_properties(self):
+        tx_body = etree.fromstring(
+            f'''<a:txBody xmlns:a="{A_NS}">
+              <a:bodyPr/><a:lstStyle/>
+              <a:p><a:endParaRPr lang="ko-KR" sz="3200">
+                <a:latin typeface="나눔스퀘어"/>
+              </a:endParaRPr></a:p>
+            </a:txBody>'''.encode()
+        )
+
+        props = _character_properties_from_text_body(tx_body)
+
+        assert props.tag == a("rPr")
+        assert props.get("sz") == "3200"
+        assert props.find(a("latin")).get("typeface") == "나눔스퀘어"
+
+    def test_reads_font_from_list_style_default_properties(self):
+        tx_body = etree.fromstring(
+            f'''<a:txBody xmlns:a="{A_NS}">
+              <a:bodyPr/>
+              <a:lstStyle><a:lvl1pPr><a:defRPr sz="2800">
+                <a:ea typeface="Pretendard"/>
+              </a:defRPr></a:lvl1pPr></a:lstStyle>
+              <a:p/>
+            </a:txBody>'''.encode()
+        )
+
+        props = _character_properties_from_text_body(tx_body)
+
+        assert props.tag == a("rPr")
+        assert props.find(a("ea")).get("typeface") == "Pretendard"
+
+    def test_merges_language_from_end_props_with_font_from_list_style(self):
+        tx_body = etree.fromstring(
+            f'''<a:txBody xmlns:a="{A_NS}">
+              <a:bodyPr/>
+              <a:lstStyle><a:lvl1pPr><a:defRPr sz="4800">
+                <a:latin typeface="Gowun Dodum"/>
+                <a:ea typeface="Gowun Dodum"/>
+              </a:defRPr></a:lvl1pPr></a:lstStyle>
+              <a:p><a:endParaRPr lang="ko-KR" dirty="0"/></a:p>
+            </a:txBody>'''.encode()
+        )
+
+        props = _character_properties_from_text_body(tx_body)
+
+        assert props.get("lang") == "ko-KR"
+        assert props.get("sz") == "4800"
+        assert props.find(a("latin")).get("typeface") == "Gowun Dodum"
+        assert props.find(a("ea")).get("typeface") == "Gowun Dodum"
+
+    def test_adds_east_asian_and_complex_script_fonts(self):
+        props = etree.fromstring(
+            f'<a:rPr xmlns:a="{A_NS}"><a:latin typeface="나눔스퀘어"/></a:rPr>'.encode()
+        )
+
+        _ensure_script_fonts(props)
+
+        assert props.find(a("ea")).get("typeface") == "나눔스퀘어"
+        assert props.find(a("cs")).get("typeface") == "나눔스퀘어"
+
+    def test_maps_latin_theme_token_to_east_asian_theme_token(self):
+        props = etree.fromstring(
+            f'<a:rPr xmlns:a="{A_NS}"><a:latin typeface="+mj-lt"/></a:rPr>'.encode()
+        )
+
+        _ensure_script_fonts(props)
+
+        assert props.find(a("ea")).get("typeface") == "+mj-ea"
+        assert props.find(a("cs")).get("typeface") == "+mj-cs"
+
+    @pytest.mark.parametrize(
+        ("placeholder_type", "family"),
+        [
+            (PP_PLACEHOLDER.TITLE, "mj"),
+            (PP_PLACEHOLDER.CENTER_TITLE, "mj"),
+            (PP_PLACEHOLDER.BODY, "mn"),
+        ],
+    )
+    def test_default_theme_fonts_cover_korean(self, placeholder_type, family):
+        props = _default_theme_run_properties(placeholder_type)
+
+        assert props.find(a("latin")).get("typeface") == f"+{family}-lt"
+        assert props.find(a("ea")).get("typeface") == f"+{family}-ea"
+        assert props.find(a("cs")).get("typeface") == f"+{family}-cs"
 
 
 # ---------------------------------------------------------------------------
