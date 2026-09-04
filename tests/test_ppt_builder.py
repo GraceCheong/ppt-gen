@@ -57,6 +57,25 @@ class TestFontPreservation:
         assert props.tag == a("rPr")
         assert props.find(a("ea")).get("typeface") == "Pretendard"
 
+    def test_merges_language_from_end_props_with_font_from_list_style(self):
+        tx_body = etree.fromstring(
+            f'''<a:txBody xmlns:a="{A_NS}">
+              <a:bodyPr/>
+              <a:lstStyle><a:lvl1pPr><a:defRPr sz="4800">
+                <a:latin typeface="Gowun Dodum"/>
+                <a:ea typeface="Gowun Dodum"/>
+              </a:defRPr></a:lvl1pPr></a:lstStyle>
+              <a:p><a:endParaRPr lang="ko-KR" dirty="0"/></a:p>
+            </a:txBody>'''.encode()
+        )
+
+        props = _character_properties_from_text_body(tx_body)
+
+        assert props.get("lang") == "ko-KR"
+        assert props.get("sz") == "4800"
+        assert props.find(a("latin")).get("typeface") == "Gowun Dodum"
+        assert props.find(a("ea")).get("typeface") == "Gowun Dodum"
+
     def test_adds_east_asian_and_complex_script_fonts(self):
         props = etree.fromstring(
             f'<a:rPr xmlns:a="{A_NS}"><a:latin typeface="나눔스퀘어"/></a:rPr>'.encode()
