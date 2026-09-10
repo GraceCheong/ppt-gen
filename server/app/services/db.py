@@ -75,6 +75,8 @@ def init_history_db() -> None:
         _migrate_add_event_only_column(conn)
         _migrate_add_sheet_subtitle(conn)
         _migrate_create_churches_table(conn)
+        _migrate_add_user_email(conn)
+        _migrate_create_password_reset_requests(conn)
         conn.commit()
 
 
@@ -378,6 +380,34 @@ def _migrate_create_churches_table(conn: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO churches (name, created_at) VALUES (?, ?)",
             (name, now),
         )
+
+
+def _migrate_add_user_email(conn: sqlite3.Connection) -> None:
+    """users에 email 컬럼 추가 — 비밀번호 찾기 본인 확인용."""
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # 이미 존재
+
+
+def _migrate_create_password_reset_requests(conn: sqlite3.Connection) -> None:
+    """관리자 승인 기반 비밀번호 초기화 요청 테이블 생성."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS password_reset_requests (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            requested_at TEXT NOT NULL,
+            decided_at TEXT,
+            expires_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_prr_user ON password_reset_requests(user_id)"
+    )
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────────────────────

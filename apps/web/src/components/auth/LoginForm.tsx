@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAuthStore } from '../../store/authStore'
+import { ForgotPasswordModal } from './ForgotPasswordModal'
 
 interface LoginFormProps {
   onSwitchToSignup: () => void
@@ -11,6 +12,7 @@ export function LoginForm({ onSwitchToSignup }: LoginFormProps) {
   const [pw, setPw] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -55,6 +57,13 @@ export function LoginForm({ onSwitchToSignup }: LoginFormProps) {
               placeholder="비밀번호 입력"
               className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-sm outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all duration-200 placeholder:text-neutral-400"
             />
+            <button
+              type="button"
+              onClick={() => setShowForgotPassword(true)}
+              className="text-[10px] text-primary-500 hover:text-primary-700 mt-1.5 underline cursor-pointer"
+            >
+              비밀번호를 잊으셨나요?
+            </button>
           </div>
 
           {error && (
@@ -100,6 +109,8 @@ export function LoginForm({ onSwitchToSignup }: LoginFormProps) {
           로그인 없이 Guest Mode 를 사용하면 교회 데이터와 연동이 불가합니다.
         </p>
       </div>
+
+      {showForgotPassword && <ForgotPasswordModal onClose={() => setShowForgotPassword(false)} />}
     </div>
   )
 }

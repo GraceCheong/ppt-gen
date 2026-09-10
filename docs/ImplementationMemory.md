@@ -1,7 +1,8 @@
+- **비밀번호 찾기(이메일 + 관리자 승인)** — ✅ 2026-09-10 완료. `SignupForm.tsx` 이메일 필수, `EmailPromptModal` (세션당 1회), `POST /auth/password-reset/request` → 관리자
 # PO,RR 구현 메모
 
 > 코드를 읽어도 알 수 없는 **결정 이유**와 **함정**만 기록한다.
-> 마지막 업데이트: 2026-06-23
+> 마지막 업데이트: 2026-09-10
 
 ---
 
@@ -26,6 +27,20 @@ SQLite는 `ALTER TABLE ... DROP PRIMARY KEY`를 지원하지 않는다. `weekly_
 ### `song_usage_events` 이력 저장 시 delete+insert
 
 이력 수정 시 곡 목록이 바뀌면 usage events를 통째로 지우고 다시 넣는다. upsert나 diff 방식은 삭제된 곡을 처리하기 복잡하기 때문.
+
+### 비밀번호 찾기 — 이메일 + 관리자 승인 방식을 택한 이유 (2026-09)
+
+소규모 교회 단위 사용자라 자체 SMTP/도메인 인증 없이 "이메일로 재설정 링크" 같은 표준 플로우를 신뢰성 있게 보내기 어렵다(스팸 처리, 발신 도메인 신뢰도). 대신:
+
+1. 회원가입 시 이메일을 필수로 받고(`users.email`), 기존 회원은 로그인 시 이메일이 없으면 등록을 유도하는 팝업을 띄운다(`EmailPromptModal`, 세션당 1회, 스킵 가능).
+2. 비밀번호를 잊은 사용자는 아이디만 입력해 초기화를 "요청"한다(`POST /auth/password-reset/request`). 이메일이 없으면 정확히 이 문구를 반환한다: "이메일 미등록으로 비밀번호 변경이 불가합니다. 이메일을 입력해주시거나, 관리자에게 문의하세요."
+3. 이메일이 있으면 `password_reset_requests`에 pending 레코드를 만들고, `ADMIN_USERS`(환경변수 `PORR_ADMIN_USERS`)에 해당하며 이메일이 등록된 관리자 전원에게 승인 링크 메일을 보낸다.
+4. 관리자는 이메일의 승인 링크(`GET /auth/admin/password-reset/{token}`)를 열어 승인/거절 버튼이 있는 HTML 확인 화면을 보고, 실제 처리는 별도 POST(`/approve`, `/reject`)에서 수행한다. **GET에서 상태를 바꾸지 않는 이유**: 이메일 클라이언트/보안 스캐너가 링크를 미리 열어보는(prefetch) 경우가 흔해서, GET이 부작용을 가지면 사용자 모르게 승인/거절이 발생할 수 있다.
+5. 승인 시 `auth_service.set_password()`를 재사용해 임시 비밀번호를 발급하고 기존 세션을 모두 삭제한 뒤, 사용자 이메일로 임시 비밀번호를 발송한다. 거절 시에도 사용자에게 안내 메일을 보낸다.
+6. 토큰은 capability-URL 패턴이다 — `secrets.token_urlsafe(32)`를 해시로 저장하고(`password_reset_requests.token_hash`), 1회성·`PORR_PASSWORD_RESET_TTL_HOURS`(기본 48시간) 만료다. 관리자가 별도로 로그인하지 않아도 링크 자체가 인증 수단이 되므로, 이메일 계정 보안이 곧 승인 권한의 보안 경계가 된다.
+7. SMTP 미설정 환경(로컬 개발 등)에서도 서버가 죽지 않도록 `email_service.send_email()`은 `PORR_SMTP_HOST`가 없으면 발송을 건너뛰고 경고 로그만 남긴다.
+
+관련 환경변수: `PORR_SMTP_HOST/PORT/USER/PASSWORD/FROM/USE_TLS`, `PORR_PUBLIC_BASE_URL`(승인 링크의 base URL), `PORR_PASSWORD_RESET_TTL_HOURS`.
 
 ---
 
@@ -74,11 +89,17 @@ Task Scheduler로 서버를 띄울 때 실행 계정이 COM(PowerPoint) 오브�
 
 ### 계정
 
-- **비밀번호 변경** — 현재 `PUT /auth/password` 같은 엔드포인트가 없다. 망각 시 DB 직접 수정 외에 방법이 없음.
+- **비밀번호 변경** — 완료. 로그인 사용자는 `PUT /auth/password`(기존 비밀번호 검증 필요), 관리자는 `POST /auth/admin/users/{id}/reset-password`로 초기화 가능.
+
+- **비밀번호 찾기(이메일 + 관리자 승인)** — 완료. `POST /auth/password-reset/request` → 관리자 이메일 승인 링크 → `GET/POST /auth/admin/password-reset/{token}` 승인·거절. 자세한 설계는 위 "결정 이유" 참고. 남은 과제:
+  - 프로덕션 배포 시 `PORR_SMTP_*`, `PORR_PUBLIC_BASE_URL`을 실제 값으로 설정해야 실제 메일이 발송된다 (미설정 시 조용히 스킵됨 — 배포 체크리스트에 추가 필요).
+  - 이메일 형식만 검증하고 실제 소유 확인(더블 옵트인)은 하지 않는다 — 필요 시 가입/등록 시 인증 메일 발송 단계 추가 고려.
+  - `users.email`에 유니크 제약이 없다 — 회원 간 이메일 중복 등록이 가능한 상태(현재는 허용).
+  - 요청자가 자신의 요청 처리 상태(대기/승인/거절)를 확인할 UI가 없다 — 필요하면 로그인 후 상태 조회 API 추가.
 
 - **닉네임·교회 수정** — 회원가입 후 변경 불가. `PUT /auth/profile` 필요.
 
-- **이력 날짜 오입력 수정 불가** — `week_end_date`가 PK라 수정이 안 된다. 삭제 후 재입력이 유일한 방법.
+- **이력 날짜 오입력 수정 불가** — `week_end_date`가 PK라 수정이 안 된다. 향후 관리자 화면에서 삭제 또는 DB 직접 수정.
 
 ### 데이터
 

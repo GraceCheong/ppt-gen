@@ -31,3 +31,13 @@ def require_user(
     if ctx.mode != "user":
         raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
     return ctx
+
+
+def require_admin(
+    session: str | None = Cookie(default=None),
+) -> AuthContext:
+    """관리자 계정만 허용한다. 비로그인이면 401, 관리자가 아니면 403."""
+    ctx = require_user(session)
+    if not auth_service.is_admin(ctx.user_id):
+        raise HTTPException(status_code=403, detail="관리자만 접근할 수 있습니다.")
+    return ctx

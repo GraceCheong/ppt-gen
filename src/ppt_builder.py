@@ -275,13 +275,12 @@ def append_lyrics_to_ppt(
             display_text = lyrics_dict[part_lower]
         elif base_part_lower in lyrics_dict:
             display_text = lyrics_dict[base_part_lower]
+        elif idx == 0 and base_part_lower in ("i", "intro"):
+            continue
+        elif part.startswith('(') and part.endswith(')'):
+            display_text = part[1:-1].strip()
         else:
-            if part.startswith('(') and part.endswith(')'):
-                display_text = part[1:-1].strip()
-            else:
-                if idx == 0 and base_part_lower in ("i", "intro"):
-                    continue
-                display_text = "-"
+            display_text = "-"
 
         display_text = wrap_text_by_max_chars(display_text, max_chars_per_line)
         chunks = chunk_text(display_text, max_lines_per_slide)

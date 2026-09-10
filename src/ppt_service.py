@@ -28,38 +28,44 @@ def build_integrated_pptx(
     max_chars_per_line=9999,
     lyrics_font_size=None,
 ):
-    prs = Presentation(template_path)
-    reset_integrated_ppt(prs)
-    appended_count = 0
-    skipped_titles = []
+    # 원본 템플릿은 절대 직접 열지 않는다 — 작업용 복사본만 Presentation()으로 연다.
+    with tempfile.TemporaryDirectory() as work_dir:
+        work_template_path = os.path.join(work_dir, "template.pptx")
+        shutil.copyfile(template_path, work_template_path)
 
-    for song_title, sequence_str in sequence_entries:
-        raw_lyrics = str(lyrics_by_title.get(song_title, "") or "")
-        if not raw_lyrics.strip():
-            skipped_titles.append(song_title)
-            continue
+        prs = Presentation(work_template_path)
+        reset_integrated_ppt(prs)
+        appended_count = 0
+        skipped_titles = []
 
-        append_lyrics_to_ppt(
-            prs,
-            song_title,
-            raw_lyrics,
-            sequence_str,
-            max_lines_per_slide,
-            max_chars_per_line=max_chars_per_line,
-            lyrics_font_size=lyrics_font_size,
-        )
-        appended_count += 1
+        for song_title, sequence_str in sequence_entries:
+            raw_lyrics = str(lyrics_by_title.get(song_title, "") or "")
+            if not raw_lyrics.strip():
+                skipped_titles.append(song_title)
+                continue
 
-    if appended_count == 0:
-        raise NoLyricsError("생성할 가사가 없습니다.")
+            append_lyrics_to_ppt(
+                prs,
+                song_title,
+                raw_lyrics,
+                sequence_str,
+                max_lines_per_slide,
+                max_chars_per_line=max_chars_per_line,
+                lyrics_font_size=lyrics_font_size,
+            )
+            appended_count += 1
 
-    append_closing_slide(prs)
+        if appended_count == 0:
+            raise NoLyricsError("생성할 가사가 없습니다.")
 
-    output_dir = os.path.dirname(os.path.abspath(output_pptx_path))
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
+        append_closing_slide(prs)
 
-    prs.save(output_pptx_path)
+        output_dir = os.path.dirname(os.path.abspath(output_pptx_path))
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        prs.save(output_pptx_path)
+
     return {
         "appended_count": appended_count,
         "skipped_titles": skipped_titles,

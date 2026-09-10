@@ -177,6 +177,7 @@ types/
 | 그래프 데이터 | `useMemo(() => ({ nodes, links }), [nodes, links])` | hover state 변경 시 시뮬 리셋 방지 |
 | 노래 DB upsert | 빈 가사로 upsert 시 기존 가사 보존 | `lyrics_service.py` CASE 조건 |
 | Windows 로그 | asyncio WinError 10054 필터링 | `server/app/main.py` logging.Filter |
+| PPT 템플릿 오픈 | `build_integrated_pptx()`가 `template_path`를 임시 디렉터리에 복사한 뒤 복사본만 `Presentation()`으로 연다 | 서버 저장 템플릿(공유/Google Drive 동기화 대상)을 job 워커가 직접 읽는 경로가 있어, 원본 잠금·동시 수정 문제 방지 |
 
 ---
 

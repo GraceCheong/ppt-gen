@@ -140,20 +140,31 @@ GET  /api/jobs/{job_id}/download
 ### 서버 API 추가
 
 ```
-POST /api/lyrics/bulk                        ← 가사 없어도 title+sequence 일괄 등록
-POST /api/history/weekly                     ← 이력 생성 + lyrics_catalog 자동 upsert
-PUT  /api/history/weekly/{date}/entries      ← 곡 목록 수정 (비밀번호)
-PUT  /api/history/weekly/{date}/roles        ← 담당자 수정 (비밀번호)
+POST /api/lyrics/bulk                                    ← 가사 없어도 title+sequence 일괄 등록
+POST /api/history/weekly                                ← 이력 생성 + lyrics_catalog 자동 upsert
+PUT  /api/history/weekly/{date}/entries                 ← 곡 목록 수정 (비밀번호)
+PUT  /api/history/weekly/{date}/roles                   ← 담당자 수정 (비밀번호)
+PUT  /auth/email                                         ← 본인 이메일 등록/변경
+POST /auth/password-reset/request                       ← 비밀번호 찾기 요청 (이메일 필요)
+GET  /auth/admin/password-reset/{token}                 ← 관리자 승인/거절 확인 화면 (HTML)
+POST /auth/admin/password-reset/{token}/approve         ← 관리자 승인
+POST /auth/admin/password-reset/{token}/reject          ← 관리자 거절
 ```
 
 ### DB 변경
 
-`weekly_repertoire` 테이블 컬럼 추가:
+**`weekly_repertoire` 테이블 컬럼 추가:**
 - `worship_leader` — 인도자
 - `accompanist` — 반주자
 - `prayer_person` — 기도자
 
-`lyrics_catalog` upsert 정책 변경:
+**`users` 테이블 컬럼 추가:**
+- `email` — 비밀번호 찾기/계정 복구 용 (기존 회원은 빈 문자열로 migration)
+
+**신규 테이블:**
+- `password_reset_requests` — token_hash(PK), user_id, status(pending/approved/rejected/expired), requested_at, decided_at, expires_at
+
+**`lyrics_catalog` upsert 정책 변경:**
 - 빈 가사로 upsert 시 기존 가사 보존 (`CASE WHEN excluded.lyrics != '' THEN ...`)
 
 ---
@@ -182,6 +193,11 @@ PUT  /api/history/weekly/{date}/roles        ← 담당자 수정 (비밀번호)
 ### 주차 계산
 - `isoWeekNum(dateStr)` — `CalendarView.tsx`에서 export
 - `formatWeekLabel(weekEndDate)` — `N주차, YY.MM.DD` 형식
+
+### PPT 템플릿 파일 처리 (`src/ppt_service.py`)
+- `build_integrated_pptx()`는 `template_path`를 절대 직접 열지 않는다 — 항상 임시 작업 디렉터리로 복사한 뒤 그 복사본만 `Presentation()`으로 연다.
+- 이유: `/api/exports/pptx` job 경로는 서버에 저장된 공유/Google Drive 동기화 템플릿 파일 경로를 그대로 넘겨받는다. 원본을 직접 열면 동기화 중 파일 잠금이나 동시 접근 문제가 생길 수 있다.
+- 출력 경로(`output_pptx_path`)는 항상 템플릿과 다른 경로여야 한다 (`prs.save()`가 원본을 덮어쓰지 않도록).
 
 ---
 
@@ -230,9 +246,9 @@ c:\dev\ppt-gen\
 
 아래는 변경 시 반드시 검증해야 한다:
 
-- **마지막 연속 반복 파트 강조**: `…-C-C` → 마지막 C 슬라이드 1장만 생성, 볼드 + `#8B1A1A`
-- **중간 반복은 강조 없음**: `V1-V1` → 일반 처리
+- **반복 파트 강조 없음**: `…-C-C`, `V1-V1` 등 연속 반복 파트를 특별 취급(스킵/볼드/색상 강조)하지 않는다. 모든 파트는 순서대로 각각 슬라이드가 생성된다 (2026-09-10 기능 제외 결정, `find_trailing_repeat_indices` 제거).
 - **PPT 레이아웃 placeholder 폰트 상속**: `add_slide()` 직후 `lstStyle/pPr/rPr` 복사
 - **가사 카탈로그 source 우선순위**: `manual > history > bugs`
 - **주간 이력 기준**: 토요일(`week_end_date`) 기준 저장
 - **오류 리포트**: 가사 원문/레파토리 원문 제외
+

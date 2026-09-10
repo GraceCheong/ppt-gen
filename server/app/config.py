@@ -55,6 +55,12 @@ SUPER_USERS: frozenset[str] = frozenset(
     u.strip() for u in _super_env.split(",") if u.strip()
 )
 
+# 회원 관리 관리자 계정 목록 (쉼표 구분) — 비밀번호 초기화 등 관리자 API 접근 권한
+_admin_env = os.environ.get("PORR_ADMIN_USERS", "")
+ADMIN_USERS: frozenset[str] = frozenset(
+    u.strip() for u in _admin_env.split(",") if u.strip()
+)
+
 # 데이터 루트 — 기본값은 프로젝트 루트/out. Google Drive 동기화 폴더 등으로 변경 가능.
 DATA_DIR: str = os.environ.get("PORR_DATA_DIR", os.path.join(ROOT_DIR, "out"))
 
@@ -74,3 +80,17 @@ GDRIVE_OAUTH_TOKEN_PATH: str = os.environ.get(
     "GDRIVE_OAUTH_TOKEN_PATH",
     os.path.join(DATA_DIR, "sheet_drive", ".gdrive_oauth_token.json"),
 )
+
+# 이메일 발송 (SMTP) — 비밀번호 초기화 승인/알림 메일용. 미설정 시 발송을 건너뛰고 로그만 남긴다.
+SMTP_HOST: str | None = os.environ.get("PORR_SMTP_HOST")
+SMTP_PORT: int = int(os.environ.get("PORR_SMTP_PORT", "587"))
+SMTP_USER: str | None = os.environ.get("PORR_SMTP_USER")
+SMTP_PASSWORD: str | None = os.environ.get("PORR_SMTP_PASSWORD")
+SMTP_FROM: str = os.environ.get("PORR_SMTP_FROM", "no-reply@porr.app")
+SMTP_USE_TLS: bool = os.environ.get("PORR_SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
+
+# 관리자 승인 링크 생성에 사용하는 서버 공개 주소
+PUBLIC_BASE_URL: str = os.environ.get("PORR_PUBLIC_BASE_URL", "http://localhost:8010")
+
+# 비밀번호 초기화 요청(관리자 승인 링크)의 유효 기간
+PASSWORD_RESET_TTL_HOURS: int = int(os.environ.get("PORR_PASSWORD_RESET_TTL_HOURS", "48"))

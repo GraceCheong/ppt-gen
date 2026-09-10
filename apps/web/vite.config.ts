@@ -10,6 +10,7 @@ export default defineConfig({
   server: isTauri ? {} : {
     proxy: {
       '/api': 'http://localhost:8010',
+      '/auth': 'http://localhost:8010',
       '/health': 'http://localhost:8010',
     },
   },
