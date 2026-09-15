@@ -3,8 +3,9 @@ import { useServerStatus } from '../../hooks/useServerStatus'
 import { isTauri } from '../../api/serverConfig'
 import { TIPS } from '../../constants/tooltips'
 import { useAuthStore } from '../../store/authStore'
-import { Presentation, Calendar, TrendingUp, LogOut, RefreshCw, UserCircle, Building2, User, Music } from 'lucide-react'
+import { Presentation, Calendar, TrendingUp, LogOut, RefreshCw, UserCircle, Building2, User, Music, KeyRound, ShieldCheck } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
+import { ChangePasswordModal } from '../auth/ChangePasswordModal'
 
 const MODE_LABEL: Record<string, string> = {
   browser: '',
@@ -33,6 +34,7 @@ export function Header() {
   const navigate = useNavigate()
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
+  const [showChangePassword, setShowChangePassword] = useState(false)
 
   const showStatus = isTauri()
   const connecting = showStatus && resolution === null
@@ -132,6 +134,22 @@ export function Header() {
                 </div>
                 <div className="p-1.5">
                   <button
+                    onClick={() => { setShowChangePassword(true); setProfileOpen(false) }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>비밀번호 변경</span>
+                  </button>
+                  {user.is_admin && (
+                    <button
+                      onClick={() => { setProfileOpen(false); navigate('/admin') }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 rounded-xl transition-colors cursor-pointer"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <span>회원 관리</span>
+                    </button>
+                  )}
+                  <button
                     onClick={handleLogout}
                     className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-danger-600 hover:bg-danger-50 rounded-xl transition-colors cursor-pointer"
                   >
@@ -161,6 +179,8 @@ export function Header() {
           </div>
         )}
       </div>
+
+      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
     </header>
   )
 }

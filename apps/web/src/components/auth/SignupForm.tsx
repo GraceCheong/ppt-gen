@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useAuthStore } from '../../store/authStore'
 import { checkIdAvailable, fetchChurches } from '../../api/auth'
 
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
 interface SignupFormProps {
   onSwitchToLogin: () => void
 }
@@ -17,7 +19,9 @@ export function SignupForm({ onSwitchToLogin }: SignupFormProps) {
   const [nickname, setNickname] = useState('')
   const [id, setId] = useState('')
   const [pw, setPw] = useState('')
-  const [idStatus, setIdStatus] = useState<'idle' | 'checking' | 'ok' | 'taken' | 'invalid'>('idle')
+  const [email, setEmail] = useState('')
+  const [idStatus, setIdStatus] = useState<'idle' | 'checking' | 'ok' | 'taken' | 'invalid' | 'error'>('idle')
+  const [checkedId, setCheckedId] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -39,20 +43,23 @@ export function SignupForm({ onSwitchToLogin }: SignupFormProps) {
     setIdStatus('checking')
     try {
       const res = await checkIdAvailable(trimmed)
-      setIdStatus(res.available ? 'ok' : 'taken')
+      setCheckedId(res.available === true ? trimmed : '')
+      setIdStatus(res.available === true ? 'ok' : res.reason ? 'invalid' : 'taken')
     } catch {
-      setIdStatus('invalid')
+      setCheckedId('')
+      setIdStatus('error')
     }
   }
 
   function handleIdChange(v: string) {
     setId(v)
     setIdStatus('idle')
+    setCheckedId('')
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (idStatus !== 'ok') {
+    if (idStatus !== 'ok' || checkedId !== id.trim()) {
       setError('아이디 중복 확인을 해주세요.')
       return
     }
@@ -60,10 +67,14 @@ export function SignupForm({ onSwitchToLogin }: SignupFormProps) {
       setError('교회명을 입력하세요.')
       return
     }
+    if (!EMAIL_RE.test(email)) {
+      setError('비밀번호 찾기를 위해 올바른 이메일 주소를 입력해주세요.')
+      return
+    }
     setLoading(true)
     setError(null)
     try {
-      await signup({ church: effectiveChurch, nickname: nickname.trim(), id: id.trim(), pw })
+      await signup({ church: effectiveChurch, nickname: nickname.trim(), id: id.trim(), pw, email: email.trim() })
     } catch (err) {
       setError(err instanceof Error ? err.message : '회원가입에 실패했습니다.')
       setLoading(false)
@@ -73,12 +84,15 @@ export function SignupForm({ onSwitchToLogin }: SignupFormProps) {
   const idHint =
     idStatus === 'ok' ? '사용 가능한 아이디입니다.' :
     idStatus === 'taken' ? '이미 사용 중인 아이디입니다.' :
-    idStatus === 'invalid' ? '유효하지 않은 아이디입니다.' : null
+    idStatus === 'invalid' ? '유효하지 않은 아이디입니다.' :
+    idStatus === 'error' ? '아이디 확인 서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.' : null
 
   const idHintColor =
-    idStatus === 'ok' ? 'text-success-600 bg-success-50 border-success-100' : 'text-danger-600 bg-danger-50 border-danger-100'
+    idStatus === 'ok' ? 'text-success-600 bg-success-50 border-success-100' :
+    idStatus === 'error' ? 'text-warning-600 bg-warning-50 border-warning-100' :
+    'text-danger-600 bg-danger-50 border-danger-100'
 
-  const submitDisabled = loading || !effectiveChurch || !nickname.trim() || !id.trim() || !pw || idStatus !== 'ok'
+  const submitDisabled = loading || !effectiveChurch || !nickname.trim() || !id.trim() || !pw || !EMAIL_RE.test(email) || idStatus !== 'ok' || checkedId !== id.trim()
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-neutral-50 px-4 py-8">
@@ -156,7 +170,7 @@ export function SignupForm({ onSwitchToLogin }: SignupFormProps) {
                 type="text"
                 value={id}
                 onChange={e => handleIdChange(e.target.value)}
-                placeholder="영문·숫자 (3~30자)"
+                placeholder="영문·숫자 (2~30자)"
                 className="flex-1 border border-neutral-200 rounded-lg px-3 py-2 text-sm outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all duration-200 placeholder:text-neutral-400 min-w-0"
               />
               <button
@@ -171,6 +185,18 @@ export function SignupForm({ onSwitchToLogin }: SignupFormProps) {
             {idHint && (
               <p className={`text-xs mt-1.5 px-2.5 py-1.5 border rounded-lg font-medium ${idHintColor}`}>{idHint}</p>
             )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-neutral-600 mb-1.5">이메일 *</label>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="example@email.com"
+              className="w-full border border-neutral-200 rounded-lg px-3 py-2 text-sm outline-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-100 transition-all duration-200 placeholder:text-neutral-400"
+            />
+            <p className="text-[10px] text-neutral-400 mt-1">비밀번호를 잊었을 때 본인 확인 및 계정 복구 안내를 받는 데 사용돼요. 다른 용도로는 사용되지 않습니다.</p>
           </div>
 
           <div>

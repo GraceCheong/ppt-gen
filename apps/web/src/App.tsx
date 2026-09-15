@@ -1,10 +1,13 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Header } from './components/layout/Header'
 import { AuthGate } from './components/auth/AuthGate'
+import { EmailPromptModal } from './components/auth/EmailPromptModal'
+import { useAuthStore } from './store/authStore'
 import { AppPage } from './pages/AppPage'
 import { HistoryPage } from './pages/HistoryPage'
+import { AdminPage } from './pages/AdminPage'
 import { initServerResolution } from './api/serverConfig'
 import './index.css'
 
@@ -19,14 +22,25 @@ const queryClient = new QueryClient({
 })
 
 function RootLayout() {
+  const { mode, user } = useAuthStore()
+  const [emailPromptDismissed, setEmailPromptDismissed] = useState(false)
+  const needsEmail = mode === 'user' && !!user && !user.email && !emailPromptDismissed
+
   return (
     <div className="flex flex-col h-screen">
       <Header />
       <div className="flex-1 min-h-0 md:overflow-hidden overflow-y-auto">
         <Outlet />
       </div>
+      {needsEmail && <EmailPromptModal onDismiss={() => setEmailPromptDismissed(true)} />}
     </div>
   )
+}
+
+function AdminRoute() {
+  const { mode, user } = useAuthStore()
+  if (mode !== 'user' || !user?.is_admin) return <Navigate to="/app" replace />
+  return <AdminPage />
 }
 
 function App() {
@@ -58,6 +72,7 @@ function App() {
                   </Suspense>
                 }
               />
+              <Route path="/admin" element={<AdminRoute />} />
               <Route path="*" element={<Navigate to="/app" replace />} />
             </Route>
           </Routes>

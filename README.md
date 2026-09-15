@@ -68,6 +68,24 @@ PPT 서버 기본 주소:
 - 로컬 개발: `http://localhost:8010`
 - 배포 실행 파일: `http://porr.sccatempo.app`
 
+## 웹 프론트엔드 (apps/web)
+
+React + Vite 웹앱. Node.js/npm 설치가 필요합니다.
+
+```powershell
+cd apps/web
+npm install
+
+# 개발 서버 (핫 리로드, http://localhost:5173)
+npm run dev
+
+# 프로덕션 빌드 (apps/web/dist 생성)
+npm run build
+```
+
+- 개발 중에는 `npm run dev`로 뜬 Vite 서버(`:5173`)가 FastAPI 서버(`:8010`)에 API 요청을 보냅니다.
+- `npm run build`로 `apps/web/dist`를 생성하면, PPT 서버(`server/app/main.py`)가 이를 감지해 `http://localhost:8010`에서 웹앱을 직접 서빙합니다. `dist`가 없으면 `/`는 404를 반환합니다.
+
 ## 빌드
 
 PyInstaller로 Windows 실행 파일을 만들고 배포용 zip으로 패키징합니다.

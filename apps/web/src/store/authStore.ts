@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { fetchMe, apiLogin, apiSignup, apiLogout, type UserInfo } from '../api/auth'
+import { fetchMe, apiLogin, apiSignup, apiLogout, changePassword as apiChangePassword, updateEmail as apiUpdateEmail, type UserInfo } from '../api/auth'
 
 /**
  * loading: 세션 확인 중
@@ -14,9 +14,11 @@ interface AuthState {
   user: UserInfo | null
   checkSession: () => Promise<void>
   login: (id: string, pw: string) => Promise<void>
-  signup: (payload: { church: string; nickname: string; id: string; pw: string }) => Promise<void>
+  signup: (payload: { church: string; nickname: string; id: string; pw: string; email: string }) => Promise<void>
   logout: () => Promise<void>
   enterGuestMode: () => void
+  changePassword: (oldPw: string, newPw: string) => Promise<void>
+  updateEmail: (email: string) => Promise<void>
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -53,5 +55,14 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   enterGuestMode: () => {
     set({ mode: 'guest', user: null })
+  },
+
+  changePassword: async (oldPw, newPw) => {
+    await apiChangePassword(oldPw, newPw)
+  },
+
+  updateEmail: async (email) => {
+    const savedEmail = await apiUpdateEmail(email)
+    set(state => (state.user ? { user: { ...state.user, email: savedEmail } } : {}))
   },
 }))

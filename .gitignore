@@ -54,3 +54,6 @@ old_out/
 # 계획 문서 (내부용)
 docs/SHEET_DRIVE_IMPL_PLAN.md
 docs/SHEET_DRIVE_PLAN.md
+
+*venv*
+*vscode*

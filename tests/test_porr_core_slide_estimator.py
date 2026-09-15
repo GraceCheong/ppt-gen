@@ -46,14 +46,14 @@ class TestEstimateSlideCount:
         # total = 2 + 2 + 1 = 5
         assert result == 5
 
-    def test_trailing_repeat_counted_once(self):
-        # C-C 마지막 반복 → 두 번째 C 슬라이드 생략
-        entries = [("한나의 노래", "I-V1-C-C")]
-        result_no_repeat = estimate_slide_count(entries, {}, 4, 18)
-        entries_no_repeat = [("한나의 노래", "I-V1-C")]
-        result_one_c = estimate_slide_count(entries_no_repeat, {}, 4, 18)
-        # C-C 는 C 한 장만 생성하므로 결과가 같아야 함
-        assert result_no_repeat == result_one_c
+    def test_trailing_repeat_not_skipped(self):
+        # C-C 마지막 반복도 skip 없이 각각 슬라이드가 생성된다
+        entries_repeat = [("한나의 노래", "I-V1-C-C")]
+        entries_single = [("한나의 노래", "I-V1-C")]
+        assert (
+            estimate_slide_count(entries_repeat, {}, 4, 18)
+            > estimate_slide_count(entries_single, {}, 4, 18)
+        )
 
     def test_with_lyrics(self):
         entries = [("한나의 노래", "I-V1-V2-C")]
@@ -70,15 +70,6 @@ class TestEstimateSlideCount:
     def test_opening_and_closing_always_present(self):
         result = estimate_slide_count([], {}, 4, 18)
         assert result == 3  # 2 opening + 1 closing
-
-    def test_consistency_with_trailing_repeat(self):
-        """마지막 연속 반복 규칙: I-V1-V2-C-C는 I-V1-V2-C와 슬라이드 수가 같아야 한다."""
-        entries_repeat = [("테스트", "I-V1-V2-C-C")]
-        entries_single = [("테스트", "I-V1-V2-C")]
-        assert (
-            estimate_slide_count(entries_repeat, {}, 4, 18)
-            == estimate_slide_count(entries_single, {}, 4, 18)
-        )
 
     def test_mid_repeat_not_skipped(self):
         """중간 반복은 skip하지 않는다: I-V1-V1-C는 I-V1-C와 슬라이드 수가 달라야 한다."""
