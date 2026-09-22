@@ -249,7 +249,7 @@ def _register_file_in_db(
     uploaded_by: str = "드라이브",
 ) -> str | None:
     """Drive에서 다운로드한 파일을 sheet_files DB에 등록. 이미 있으면 drive_file_id만 갱신. file_id 반환."""
-    from server.app.services.sheet_service import ensure_song_exists, normalize_title
+    from server.app.services.sheet_service import normalize_title
 
     if not os.path.exists(storage_path):
         return None
@@ -288,7 +288,7 @@ def _register_file_in_db(
         # 신규 등록
         clean_title, key_root, key_mode, page_number, info = _parse_sheet_filename(original_filename)
         display_title = f"{clean_title} {info}".strip() if info else clean_title
-        title_key = ensure_song_exists(conn, clean_title)  # 콜라보 포함 clean_title로 song_title_key 결정
+        title_key = normalize_title(clean_title) 
         ext = Path(original_filename).suffix.lstrip(".").lower() or "bin"
         stored_filename = os.path.basename(storage_path)
         now = _now_iso()
